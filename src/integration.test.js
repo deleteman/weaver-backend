@@ -82,10 +82,9 @@ describe('Artifact Effects System', () => {
     });
 
     test('Tome effect converts Citizen to Scholar', () => {
-        ArtifactEffects.applyTomeEffect(world, 0, 0, artifact, npc);
-        // 75% chance, but we can't guarantee it happened
-        // Just verify the method doesn't throw
-        expect(npc.currentRole).toMatch(/Citizen|Scholar/);
+        const rng = () => 0.1; // deterministic: 0.1 < 0.75 always triggers conversion
+        ArtifactEffects.applyTomeEffect(world, 0, 0, artifact, npc, rng);
+        expect(npc.currentRole).toBe('Scholar');
     });
 
     test('Jewelry effect adds diplomatic bonus', () => {
@@ -97,8 +96,10 @@ describe('Artifact Effects System', () => {
 
     test('Weapon effect elevates lower-class NPCs', () => {
         npc.currentRole = 'Citizen';
-        ArtifactEffects.applyWeaponEffect(world, 0, 0, artifact, npc);
-        expect(['Guard', 'Hero', 'Citizen']).toContain(npc.currentRole);
+        const rng = () => 0.1; // deterministic: 0.1 < 0.5 always picks Guard
+        ArtifactEffects.applyWeaponEffect(world, 0, 0, artifact, npc, rng);
+        expect(npc.currentRole).toBe('Guard');
+        expect(npc.weaponBonus).toBe(5);
     });
 
     test('calculateCombatBonus sums weapon and role bonuses', () => {

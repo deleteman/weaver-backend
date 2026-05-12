@@ -7,9 +7,9 @@ const { log } = require('./logger');
  */
 
 class ArtifactEffects {
-    static applyTomeEffect(world, x, y, artifact, targetNpc) {
+    static applyTomeEffect(world, x, y, artifact, targetNpc, rng) {
         // Tomes: 75% chance to convert Citizens to Scholars
-        if (targetNpc.currentRole === "Citizen" && Math.random() < 0.75) {
+        if (targetNpc.currentRole === "Citizen" && rng() < 0.75) {
             const oldRole = targetNpc.currentRole;
             targetNpc.currentRole = "Scholar";
             targetNpc.history.events.push(`Studied the ${artifact.name} and became enlightened, transforming into a Scholar.`);
@@ -22,24 +22,24 @@ class ArtifactEffects {
     static applyJewelryEffect(world, x, y, artifact, targetNpc, rng) {
         // Jewelry: +20% diplomatic modifier, can corrupt roles
         targetNpc.artifactBonus = (targetNpc.artifactBonus || 0) + 0.20;
-        
+
         // Small chance to corrupt role
-        if (rng && rng() < 0.3) {
+        if (rng() < 0.3) {
             const potentialRoles = ["Guard", "Cultist", "Bandit", "Merchant"];
-            const newRole = potentialRoles[Math.floor(Math.random() * potentialRoles.length)];
+            const newRole = potentialRoles[Math.floor(rng() * potentialRoles.length)];
             const oldRole = targetNpc.currentRole;
             targetNpc.currentRole = newRole;
             targetNpc.history.events.push(`The ${artifact.name} corrupted their mind, transforming them into a ${newRole}.`);
             log('artifact-effect:jewelry-corruption', { npcId: targetNpc.identity.id, oldRole, newRole });
         }
-        
+
         log('artifact-effect:jewelry-bonus', { npcId: targetNpc.identity.id, bonusApplied: 0.20 });
     }
 
-    static applyWeaponEffect(world, x, y, artifact, targetNpc) {
+    static applyWeaponEffect(world, x, y, artifact, targetNpc, rng) {
         // Weapons: Elevate lower-class NPCs to Guards or Heroes
         if (['Citizen', 'Beggar', 'Merchant'].includes(targetNpc.currentRole)) {
-            const newRole = Math.random() < 0.5 ? 'Guard' : 'Hero';
+            const newRole = rng() < 0.5 ? 'Guard' : 'Hero';
             const oldRole = targetNpc.currentRole;
             targetNpc.currentRole = newRole;
             targetNpc.weaponBonus = (targetNpc.weaponBonus || 0) + 5;
@@ -47,7 +47,7 @@ class ArtifactEffects {
             log('artifact-effect:weapon-elevation', { npcId: targetNpc.identity.id, oldRole, newRole });
             return true;
         }
-        
+
         // For Guards/Heroes, just add combat bonus
         if (['Guard', 'Hero', 'Blacksmith'].includes(targetNpc.currentRole)) {
             targetNpc.weaponBonus = (targetNpc.weaponBonus || 0) + 5;
@@ -57,15 +57,13 @@ class ArtifactEffects {
         return false;
     }
 
-    static applyRelicEffect(world, x, y, artifact, targetNpc, npcs) {
+    static applyRelicEffect(world, x, y, artifact, targetNpc, npcs, rng) {
         // Relics: Paradigm shift - convert 50% of town to Cultists or force migration
-        const roll = Math.random();
-        
-        if (roll < 0.5) {
+        if (rng() < 0.5) {
             // Mass conversion to Cultists
             let converted = 0;
             for (const npc of npcs) {
-                if (npc.currentRole !== 'Cultist' && Math.random() < 0.5) {
+                if (npc.currentRole !== 'Cultist' && rng() < 0.5) {
                     npc.currentRole = 'Cultist';
                     npc.history.events.push(`Was touched by the power of the ${artifact.name} and converted to Cultism.`);
                     converted++;

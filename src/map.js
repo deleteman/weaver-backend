@@ -237,6 +237,14 @@ function generateMiniMap(centerX, centerY, radius = 1, discoveredCoordinates = n
     };
 }
 
+function getAdjacentTiles(x, y) {
+    return [[-1, 0], [1, 0], [0, -1], [0, 1]].map(([dx, dy]) => ({
+        x: x + dx,
+        y: y + dy,
+        key: `world_X${x + dx}_Y${y + dy}`
+    }));
+}
+
 module.exports = {
     determineBiome,
     generateTownName,
@@ -245,6 +253,7 @@ module.exports = {
     computeOwnership,
     generateMiniMap,
     estimateTierFromTime,
+    getAdjacentTiles,
     BIOME_TYPES,
     CLAIM_RADIUS_BY_TIER,
     DISTRICT_TYPES

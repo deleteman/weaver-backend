@@ -68,6 +68,18 @@ function getGlobalYear() {
     return year;
 }
 
+function getTierForCoordinate(key) {
+    const deltas = getDeltas(key);
+    const tierDelta = deltas.find(d => d.state_key === 'tier');
+    return tierDelta ? parseInt(tierDelta.state_value) : 0;
+}
+
+function getSuzerainForCoordinate(key) {
+    const deltas = getDeltas(key);
+    const suzerainDelta = deltas.find(d => d.state_key === 'claimedBy' || d.state_key === 'suzerain');
+    return suzerainDelta ? suzerainDelta.state_value : null;
+}
+
 // Update the exports to include it!
-module.exports = { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity };
+module.exports = { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, getSuzerainForCoordinate };
 

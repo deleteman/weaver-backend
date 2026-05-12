@@ -11,16 +11,19 @@ Every action endpoint receives and returns this object. Initialize it for new pl
 
 ```json
 {
-  "stats":      { "stealth": 5, "strength": 5 },
-  "level":      1,
-  "xp":         0,
-  "reputation": 0,
-  "inventory":  [],
-  "titles":     {}
+  "stats":         { "stealth": 5, "strength": 5 },
+  "level":         1,
+  "xp":            0,
+  "reputation":    0,
+  "reputationMap": {},
+  "inventory":     [],
+  "titles":        {}
 }
 ```
 
 `titles` is a map of `{ "TownName": "Mayor" }` or `{ "Global": "Master Thief" }`.
+
+`reputation` is the flat backward-compatible score. `reputationMap` is a coordinate-keyed map (`{ "world_X2_Y3": 50 }`) tracking per-location standing. All action endpoints populate both fields. For colony tiles, a portion of the reputation delta is propagated to the suzerain's entry in `reputationMap`.
 
 ---
 
@@ -90,7 +93,15 @@ Full 4-pass world load for a coordinate.
       },
       "inventory": [{ "id": "item001", "name": "Iron Blade", "type": "Weapon" }],
       "quests":    [{ "type": "Fetch", "itemType": "Weapon", "reward": 50 }],
-      "history":   ["[Year 1] Became a Guard."],
+      "history": [
+        {
+          "id":          "ev_a1b2c3d4",
+          "year":        1,
+          "description": "[Year 1] Became a Guard.",
+          "type":        "career_shift",
+          "causedBy":    null
+        }
+      ],
       "memories":  { "npc-id-xyz": "hates" }
     }
   ]
@@ -114,8 +125,48 @@ Full 4-pass world load for a coordinate.
 | `appearance` | object | Structured visual profile (see below) |
 | `inventory` | object[] | Items carried by this NPC |
 | `quests` | object[] | Quests this NPC offers |
-| `history` | string[] | This NPC's personal event log |
+| `history` | object[] | This NPC's personal event log — see History Event shape below |
 | `memories` | object | Map of `{ npcId: "hates" \| "avenged" }` |
+
+**History Event object** — each entry in `history[]` and `town.history[]` is a structured object:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | `"ev_"` + 8-char deterministic hex hash of the description. Stable across loads. |
+| `year` | number | In-world year when the event occurred |
+| `description` | string | Human-readable event text, e.g. `"[Year 12] Became a Guard."` |
+| `type` | string | Machine-readable event category (see table below) |
+| `causedBy` | string \| null | `id` of the event that caused this one, or `null` |
+
+**Event type values:**
+
+| Type | Trigger |
+|------|---------|
+| `immigration` | NPC arrived from another coordinate |
+| `settlement_promoted` | Settlement gained a tier |
+| `age_transition` | NPC came of age (child → adult) |
+| `grief` | NPC lost a loved one |
+| `birth` | New NPC born |
+| `death` | NPC died of natural causes |
+| `child_death` | NPC died before adulthood |
+| `inheritance` | NPC inherited from the deceased (`causedBy` = death event ID) |
+| `career_shift` | NPC changed role |
+| `power_seizure` | NPC ousted the Mayor and took control |
+| `romance` | NPC fell in love |
+| `friendship` | NPC formed a strong bond |
+| `rivalry` | NPC entered a blood feud |
+| `artifact_discovery` | NPC found an artifact |
+| `migration` | NPC moved to a different coordinate |
+| `assassination` | NPC killed by player action |
+| `chaos` | Political instability following a slaying |
+| `regicide` | Ruler slain by the player; new ruler took power |
+| `legacy` | Miscellaneous player-triggered event (quest outcomes, gifts) |
+| `legacy` (DB) | Plain-string event from pre-structured DB rows, auto-wrapped on read |
+
+**CausedBy links** — only populated when the causal event ID is in scope at write time:
+- `inheritance` → `causedBy` is the `id` of the deceased NPC's `death` event
+- `grief` → `causedBy` is the `id` of the deceased partner's `death` event
+- `power_seizure` (oust) → the ousted Mayor's entry has `causedBy` pointing to the new Mayor's seizure event
 
 **`appearance` object fields:**
 
@@ -205,11 +256,18 @@ Full chronological event log for a coordinate. Runs the full 4-pass pipeline.
 {
   "title": "The Chronicles of Coordinate 0, 0",
   "timeline": {
-    "Year 1":  ["Deephollow: Founded the town.", "Kael: Became a Guard."],
-    "Year 15": ["Kael: Slew the bandit lord Mira."]
+    "Year 1": [
+      { "actor": "Deephollow", "text": "Founded the town.",  "id": "ev_3f1a2b4c", "type": "settlement_promoted", "causedBy": null },
+      { "actor": "Kael",       "text": "Became a Guard.",    "id": "ev_a1b2c3d4", "type": "career_shift",        "causedBy": null }
+    ],
+    "Year 15": [
+      { "actor": "Kael", "text": "Slew the bandit lord Mira.", "id": "ev_9e8d7c6b", "type": "assassination", "causedBy": null }
+    ]
   }
 }
 ```
+
+Each timeline entry is an object with `actor` (entity name), `text` (event text without the year prefix), `id` (event ID or `null` for legacy rows), `type`, and `causedBy`.
 
 ---
 
@@ -456,6 +514,21 @@ Step down as Mayor.
 
 ---
 
+### `POST /api/action/regicide`
+
+Attempt to assassinate the ruling Mayor of a Kingdom-tier settlement and seize the throne.
+
+**Required fields:** `x`, `y`, `playerState`
+
+**Preconditions:** A living Mayor NPC must exist at the coordinate. The coordinate must not be a District.
+
+**Mechanics:**
+- `FailChance = 0.95 - (stealth × 0.01) - (strength × 0.01) - (weaponTier × 0.05)`
+- Success: Mayor status → `"Dead"`, player gains the Mayor title, +5000 XP; town history event `type: "regicide"` written
+- Failure: −50 reputation; town history event `type: "chaos"` written
+
+---
+
 ### `POST /api/action/loot_tomb`
 
 Loot all items from a **dead** NPC.
@@ -499,6 +572,7 @@ Advance the global year counter and return the chunk reloaded at the new year.
 | Assassinate (success) | +75 |
 | Turn in quest — item delivery | +50 |
 | Report bounty | +100 |
+| Regicide (success) | +5000 |
 
 Level-up threshold: `level × 100 XP`. Each level-up grants +1 Stealth and +1 Strength.
 

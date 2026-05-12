@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- `src/event-utils.js`: new module exporting `deterministicHash(input)` (SHA-1, 8-char hex) and `makeEvent(description, type, causedBy)` — the shared factory for all structured history events.
+- History events are now structured objects `{ id, year, description, type, causedBy }` instead of plain strings. All 20 event push sites in `src/history.js` and all 13 sites in `src/actions.js` produce structured events.
+- Causal links wired: `inheritance` events carry `causedBy` pointing to the preceding `death` event ID; `grief` events point to the deceased partner's death event; `power_seizure` (oust) events point to the new Mayor's seizure event.
+- `appendHistory()` in `src/actions.js` fixed to correctly push to `entity.history.events` (was `entity.history`) and now stores events as JSON-stringified objects in the `history_append` Delta column.
+- Delta Pass in `index.js` gains a backward-compat shim: legacy plain-string `history_append` deltas (detected by non-`{` first character) are auto-wrapped as `type: 'legacy'` event objects on read, so old DB rows remain readable without migration.
+- Chronicle endpoint (`GET /api/chunk/:x/:y/chronicle`) updated to dual-path parser: structured events are rendered directly from their fields; legacy strings are parsed via the existing `[Year N]` regex. Timeline entries now include `id`, `type`, and `causedBy` fields alongside `actor` and `text`.
+
+
+- `regicide` player action (`POST /api/action/regicide`): allows the player to attempt to assassinate the ruling Mayor and seize the throne. Awards +5000 XP on success; reduces reputation by 50 on failure. Uses `PlayerMechanics.resolveRegicide()` for probability resolution.
+- `ArtifactEffects` static methods (`applyTomeEffect`, `applyWeaponEffect`, `applyJewelryEffect`, `applyRelicEffect`) are now wired into `turnInQuest` — donating an artifact to a quest giver triggers the correct effect class instead of a hardcoded role assignment.
+- Conflict resolution triggered during decade-based settlement promotion in `simulateHistory`: when a settlement promotes to a new tier, it checks adjacent tiles for occupied neighbors and calls `PoliticalEngine.resolveConflict()` to determine annexation, subjugation, or repulsion outcomes, persisting results as Deltas.
+- Colony reputation propagation: all player actions now route reputation changes through `applyReputationWithPropagation()`, which calls `PlayerMechanics.calculateReputationDelta()` and splits the delta between `playerState.reputation` (flat, backward-compatible) and a new `playerState.reputationMap` coordinate-keyed object that tracks per-location standing and propagates a portion to the suzerain if the tile is a colony.
+- `getAdjacentTiles(x, y)` helper added to `src/map.js` returning the 4 cardinal neighbors as `{ x, y, key }` objects.
+- `getTierForCoordinate(key)` and `getSuzerainForCoordinate(key)` added to `src/db.js` to query settlement tier and suzerain from the Delta store.
+
+### Changed
+- `src/artifact-effects.js`: all four static methods now accept an `rng` parameter instead of calling `Math.random()` directly, restoring full determinism for simulation paths.
+- `banish()` and `abdicate()` in `src/actions.js` now use a seeded `seedrandom` RNG (keyed on coordinate + globalYear) instead of `Math.random()` for destination and successor selection, making outcomes reproducible.
+- `src/actions.js` and `index.js`: all `console.log` calls in production code paths replaced with `log()` from `src/logger.js`.
+- Inline `require('./db')` inside `simulateHistory()` moved to the top-level module imports in `src/history.js`.
+
+### Fixed
+- Four route handlers in `index.js` (`GET /api/chunk/:x/:y`, `GET /api/coordinate`, `GET /api/chunk/:x/:y/chronicle`, `POST /api/action/:actionType`) were unprotected. All now have `try/catch` blocks with structured `{ error, code }` responses and `unloadCoordinate` cleanup in the catch path to prevent stale ECS state.
+
 ### Fixed
 - `assassinate`, `claimThrone`, `isMayor`, and `abdicate` in `src/actions.js` crashed with `TypeError: Cannot set properties of undefined` when the target coordinate was a District. All four functions queried for `identity.type === "Town"` only; Districts have `identity.type === "District"`, so the query returned `undefined`. The filter now includes both types.
 - Governing actions (`claimThrone`, `taxTown`, `decree`, `banish`, `abdicate`) are now blocked on District coordinates with a clear message directing the player to the parent city. `isMayor` returns `false` unconditionally for Districts, which gates all mayor-only actions. Killing a District administrator no longer grants the player a Mayor title or writes a `currentMayor` delta that would be silently overwritten on the next load.

@@ -43,7 +43,7 @@ The engine utilizes `miniplex`. Every actor, town, and child is an entity compos
 -------------------------------------
 | `Identity` | `name`, `type`, `id` (UUID) | Defines the entity. UUIDs are deterministic hashes of the seed, year, and name. | 
 | `Location` | `tiles` (array), `parent_id` | Array of X/Y pairs supporting multi-tile cities. | 
-| `History` | `events` (array of strings) | Chronological logs (e.g., `"[Year 12] Became Mayor."`). | 
+| `History` | `events` (array of event objects) | Chronological logs. Each event: `{ id, year, description, type, causedBy }`. `id` is `"ev_"` + 8-char SHA-1 hash of description. `type` is a machine-readable slug (e.g. `"death"`, `"power_seizure"`). `causedBy` links to the `id` of a causal event or `null`. Old plain-string deltas are auto-wrapped as `type: "legacy"` on read. | 
 | `Knowledge` | `memories` (dict) | Maps NPC UUIDs to statuses (`loves`, `hates`, `avenged`). | 
 | `Inventory` | `items` (array of objects) | Rich Artifact objects with their own UUIDs and lore. | 
 | `Status` | `state` (enum) | `Alive`, `Dead`, `Migrated`, `Exiled`. | 
@@ -96,23 +96,25 @@ Artifacts are crafted dynamically. Every simulated year, Scholars, Blacksmiths, 
 
   * **Mechanic:** Reading high-tier Tomes extracts explicit X/Y coordinates of generated Ruins or Colonies.
 
-  * **Role Shift:** Gifting to a Citizen has a 75% chance to convert them to a Scholar.
+  * **Role Shift:** Donating a Tome via `turnInQuest` has a 75% chance to convert Citizens → Scholars (`ArtifactEffects.applyTomeEffect`).
 
 * **Jewelry (Corruption):** Discovered by Bandits/Merchants.
 
-  * **Subversion:** Gifting cursed jewelry instantly corrupts an NPC's role (e.g., Guard -> Cultist).
+  * **Subversion:** Donating cursed jewelry via `turnInQuest` converts the NPC to a Cultist (`ArtifactEffects.applyJewelryEffect`).
 
   * **Diplomatic Weight:** Provides a +20% success modifier to `/ally` or `/trade` actions if held by the acting Mayor.
 
 * **Weapons (Elevation):** Crafted by Blacksmiths.
 
-  * **Militarization:** Gifting elevates lower-class NPCs to Guards or Heroes.
+  * **Militarization:** Donating a Weapon via `turnInQuest` elevates the NPC to Hero role (`ArtifactEffects.applyWeaponEffect`).
 
   * **War Modifiers:** Grants +5 to a town's Offense/Defense score per Weapon held by a Guard/Hero.
 
 * **Relics (Anomalies):** Discovered by Cultists.
 
-  * **Paradigm Shifts:** Dropping Relics triggers massive ECS events (e.g., 50% of the town converts to Cultists, or a spontaneous migration is forced).
+  * **Paradigm Shifts:** Donating a Relic via `turnInQuest` triggers a 50% mass Cultist conversion or forced migration (`ArtifactEffects.applyRelicEffect`).
+
+All four artifact effect static methods accept a seeded `rng` parameter for full determinism in simulation paths.
 
 ### 4.4. NPC Appearance & Visual Profile
 
@@ -173,6 +175,8 @@ When a town levels up to a Small City, it must claim adjacent tiles.
 
 ### 5.2. Conflict Resolution (The Math of War)
 
+Conflict resolution is triggered automatically during the Future Pass when a settlement promotes to a new tier. `PoliticalEngine.resolveConflict()` checks adjacent tiles for occupied neighbours and determines annexation, subjugation, or repulsion outcomes, persisting results as Deltas.
+
 When expansion limits are reached, Aggressive or Opportunistic towns invade. The combat is resolved strictly mathematically using deterministic peeking:
 
 1. **Offense Score:** `(Invader Guards * 2) + (Invader Heroes * 5) + (Invader Weapons * 5) + (Suzerain Guards * 0.5)`
@@ -193,10 +197,12 @@ When expansion limits are reached, Aggressive or Opportunistic towns invade. The
 
 The `playerState` maintains core stats that govern the success rates of backend actions.
 
-* **Progression Loop:** * Steal an item: +25 XP
+* **Progression Loop:**
+  * Steal an item: +25 XP
   * Turn in Fetch/Heist Quest: +50 XP
   * Report Bounty: +100 XP
-  * Usurp Kingdom (Regicide): +5000 XP
+  * Assassinate NPC: +75 XP
+  * Regicide (success): +5000 XP
 
 * **Leveling:** Every 100 XP grants 1 Level. Each level allows the client to increment `stealth` or `strength` by 1.
 
@@ -206,22 +212,26 @@ The `playerState` maintains core stats that govern the success rates of backend 
 
 * **`/api/action/assassinate`**: `FailChance = Math.max(0.10, 0.80 - (playerState.stats.stealth * 0.05) - (playerState.stats.strength * 0.05))`. Equipped Weapons grant a hidden +0.10 to success. Failure drops reputation by 50.
 
-* **Regicide (Kingdom Takeover):** Requires targeting an NPC with the `King` role. Base `FailChance` is locked at **0.95**. Requires massive Stealth/Strength stacking and high-tier Weapons to succeed. Success transfers the `Kingdom` title and territory to the player.
+* **`/api/action/regicide` (Kingdom Takeover):** Targets the living Mayor at any coordinate (not Districts). `FailChance = 0.95 - (stealth × 0.01) - (strength × 0.01) - (weaponTier × 0.05)`. Success marks the Mayor `Dead`, writes a `regicide` history event on the town, awards +5000 XP, and installs the player as Mayor. Failure deducts −50 reputation and writes a `chaos` history event.
 
 ### 6.3. Coordinate-Scoped Reputation
 
-Reputation is tracked strictly via coordinate keys to support changing borders.
+Reputation is tracked in two parallel fields on `playerState`:
+
+* `reputation` — flat backward-compatible integer used by all existing action checks.
+* `reputationMap` — coordinate-keyed object tracking per-location standing:
 
 ```json
 "playerState": {
-  "reputation": {
+  "reputation": 50,
+  "reputationMap": {
     "world_X10_Y15": 50,
     "world_X20_Y30": -100
   }
 }
 ```
 
-Note: If `world_X20_Y30` is a Colony, actions there propagate 50% of their reputation changes to the Suzerain's coordinate.
+All player actions route through `applyReputationWithPropagation()`, which calls `PlayerMechanics.calculateReputationDelta()` and writes the delta to both fields. If the action coordinate is a Colony tile, a portion of the delta is propagated to the suzerain's entry in `reputationMap`.
 
 ## 7. Spatial Visibility (Fog of War API)
 To allow the frontend to render mini-maps or neighbor tiles without crashing the server by simulating 9 chunks simultaneously, a lightweight metadata endpoint is used.

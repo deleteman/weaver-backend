@@ -19,6 +19,7 @@ const crypto = require('crypto');
 const { log } = require('./src/logger');
 const { generateAppearance } = require('./src/appearance');
 const { generateTileDescription } = require('./src/tile-description');
+const { deterministicHash } = require('./src/event-utils');
 
 const MAX_FUTURE_YEARS = 500;
 
@@ -120,7 +121,22 @@ function injectImmigrantsAndApplyDeltas(world, x, y, townEntity, currentCoordina
                 entityToUpdate.knowledge.memories[targetName] = change.state_value;
                 log(`Applied memory delta to ${entityToUpdate.identity.name}`);
             } else if (change.state_key === "history_append") {
-                entityToUpdate.history.events.push(change.state_value);
+                const raw = change.state_value;
+                let historyEvent;
+                if (typeof raw === 'string' && raw.charAt(0) !== '{') {
+                    // Backward compat: legacy plain-string event stored before structured events
+                    const yearMatch = raw.match(/\[Year (\d+)\]/);
+                    historyEvent = {
+                        id: 'ev_' + deterministicHash(raw),
+                        year: yearMatch ? parseInt(yearMatch[1]) : 0,
+                        description: raw,
+                        type: 'legacy',
+                        causedBy: null
+                    };
+                } else {
+                    historyEvent = JSON.parse(raw);
+                }
+                entityToUpdate.history.events.push(historyEvent);
                 log(`Appended history to ${entityToUpdate.identity.name}`);
             } else if (change.state_key === "currentMayor") {
                 // Districts always inherit currentMayor from their parent (set by loadAsDistrict).
@@ -131,9 +147,9 @@ function injectImmigrantsAndApplyDeltas(world, x, y, townEntity, currentCoordina
                     log(`Applied currentMayor delta to ${entityToUpdate.identity.name}`);
                 }
             } else {
-                console.log(`Applying ${change.state_key} = ${change.state_value} to ${entityToUpdate.identity.name} (${entityToUpdate.identity.id})`);
+                log(`Applying ${change.state_key} = ${change.state_value} to ${entityToUpdate.identity.name} (${entityToUpdate.identity.id})`);
                 entityToUpdate[change.state_key] = change.state_value;
-                console.log(`Applied ${change.state_key} delta to ${entityToUpdate.identity.name}`);
+                log(`Applied ${change.state_key} delta to ${entityToUpdate.identity.name}`);
             }
         } else {
             log(`No entity found for delta: ${change.entity_name} ${change.state_key}`);
@@ -431,15 +447,21 @@ app.get('/api/chunk/:x/:y', (req, res) => {
     const x = parseInt(req.params.x);
     const y = parseInt(req.params.y);
     log(`API request: GET /api/chunk/${x}/${y}`);
-    loadCoordinate(x, y);
-    const chunkData = serializeChunk(x, y);
-    unloadCoordinate(x, y); 
-    log(`API response: chunk data sent`);
-    res.json(chunkData);
+    try {
+        loadCoordinate(x, y);
+        const chunkData = serializeChunk(x, y);
+        unloadCoordinate(x, y);
+        log(`API response: chunk data sent`);
+        res.json(chunkData);
+    } catch (err) {
+        unloadCoordinate(x, y);
+        log(`Chunk load error at (${x}, ${y}): ${err.message}`);
+        res.status(500).json({ error: err.message, code: 'CHUNK_LOAD_ERROR' });
+    }
 });
 
 function handleAction(req, res, actionFunction) {
-    console.log(`handleAction called for ${actionFunction.name}`);
+    log(`handleAction called for ${actionFunction.name}`);
     // Extract BOTH item and itemId to support the new artifacts
     const { x: xStr, y: yStr, target, item, itemId, newRole, playerState } = req.body;
     const x = parseInt(xStr);
@@ -477,7 +499,7 @@ function handleAction(req, res, actionFunction) {
 app.post('/api/action/steal', (req, res) => handleAction(req, res, actions.stealItem));
 app.post('/api/action/turnin', (req, res) => handleAction(req, res, actions.turnInQuest));
 app.post('/api/action/assassinate', (req, res) => {
-    console.log('POST /api/action/assassinate received');
+    log('POST /api/action/assassinate received');
     handleAction(req, res, actions.assassinate);
 });
 app.post('/api/action/claim', (req, res) => handleAction(req, res, actions.claimThrone));
@@ -486,7 +508,31 @@ app.post('/api/action/tax', (req, res) => handleAction(req, res, actions.taxTown
 app.post('/api/action/abdicate', (req, res) => handleAction(req, res, actions.abdicate));
 app.post('/api/action/banish', (req, res) => handleAction(req, res, actions.banish));
 app.post('/api/action/decree', (req, res) => handleAction(req, res, actions.decree));
-app.post('/api/action/loot_tomb', (req, res) => handleAction(req, res, actions.lootTomb)); // NEW!
+app.post('/api/action/loot_tomb', (req, res) => handleAction(req, res, actions.lootTomb));
+app.post('/api/action/regicide', (req, res) => {
+    const { x: xStr, y: yStr, target, weaponTier, playerState } = req.body;
+    const x = parseInt(xStr);
+    const y = parseInt(yStr);
+    if (isNaN(x) || isNaN(y)) return res.status(400).json({ error: 'Invalid x or y coordinate.' });
+    const coordinateString = `world_X${x}_Y${y}`;
+    if (!playerState.titles) playerState.titles = {};
+    try {
+        loadCoordinate(x, y);
+        const result = actions.regicide(world, coordinateString, target, weaponTier || 0, playerState);
+        if (result.success) {
+            const chunkData = serializeChunk(x, y);
+            unloadCoordinate(x, y);
+            res.json({ message: result.message, playerState, chunkData });
+        } else {
+            unloadCoordinate(x, y);
+            res.status(400).json({ error: result.message, playerState });
+        }
+    } catch (err) {
+        unloadCoordinate(x, y);
+        log(`Regicide error: ${err.message}`);
+        res.status(500).json({ error: err.message, code: 'REGICIDE_ERROR' });
+    }
+});
 
 
 
@@ -553,46 +599,67 @@ app.get('/api/map/:x/:y/:radius', handleMiniMapRequest);
 app.get('/api/chunk/:x/:y/chronicle', (req, res) => {
     const x = parseInt(req.params.x);
     const y = parseInt(req.params.y);
-    
-    log(`API request: GET /api/chunk/${x}/${y}/chronicle`);
-    loadCoordinate(x, y);
-    
-    // Gather all entities with a history
-    const entities = Array.from(world.with('identity', 'history').where(e => e.location.x === x && e.location.y === y));
-    
-    let allEvents = [];
-    const yearRegex = /\[Year (\d+)\] (.*)/;
 
-    for (const entity of entities) {
-        for (const eventString of entity.history.events) {
-            const match = eventString.match(yearRegex);
-            if (match) {
-                allEvents.push({
-                    year: parseInt(match[1]),
-                    actor: entity.identity.name,
-                    text: match[2]
-                });
+    log(`API request: GET /api/chunk/${x}/${y}/chronicle`);
+    try {
+        loadCoordinate(x, y);
+
+        // Gather all entities with a history
+        const entities = Array.from(world.with('identity', 'history').where(e => e.location.x === x && e.location.y === y));
+
+        let allEvents = [];
+        const yearRegex = /\[Year (\d+)\] (.*)/;
+
+        for (const entity of entities) {
+            for (const ev of entity.history.events) {
+                if (typeof ev === 'string') {
+                    // Legacy plain-string event (pre-structured-events data)
+                    const match = ev.match(yearRegex);
+                    if (match) {
+                        allEvents.push({
+                            year: parseInt(match[1]),
+                            actor: entity.identity.name,
+                            text: match[2],
+                            id: null,
+                            type: 'legacy',
+                            causedBy: null
+                        });
+                    }
+                } else {
+                    allEvents.push({
+                        year: ev.year,
+                        actor: entity.identity.name,
+                        text: ev.description.replace(/^\[Year \d+\]\s*/, ''),
+                        id: ev.id,
+                        type: ev.type,
+                        causedBy: ev.causedBy
+                    });
+                }
             }
         }
+
+        // Sort chronologically
+        allEvents.sort((a, b) => a.year - b.year);
+
+        // Group by year; entries are objects (id, actor, text, type, causedBy)
+        let chronicle = {};
+        for (const ev of allEvents) {
+            if (!chronicle[`Year ${ev.year}`]) chronicle[`Year ${ev.year}`] = [];
+            chronicle[`Year ${ev.year}`].push({ id: ev.id, actor: ev.actor, text: ev.text, type: ev.type, causedBy: ev.causedBy });
+        }
+
+        unloadCoordinate(x, y);
+
+        log(`Chronicle generated with ${allEvents.length} events`);
+        res.json({
+            title: `The Chronicles of Coordinate ${x}, ${y}`,
+            timeline: chronicle
+        });
+    } catch (err) {
+        unloadCoordinate(x, y);
+        log(`Chronicle error at (${x}, ${y}): ${err.message}`);
+        res.status(500).json({ error: err.message, code: 'CHRONICLE_ERROR' });
     }
-
-    // Sort chronologically
-    allEvents.sort((a, b) => a.year - b.year);
-
-    // Group by year for a beautiful JSON summary format
-    let chronicle = {};
-    for (const ev of allEvents) {
-        if (!chronicle[`Year ${ev.year}`]) chronicle[`Year ${ev.year}`] = [];
-        chronicle[`Year ${ev.year}`].push(`${ev.actor}: ${ev.text}`);
-    }
-
-    unloadCoordinate(x, y);
-
-    log(`Chronicle generated with ${allEvents.length} events`);
-    res.json({
-        title: `The Chronicles of Coordinate ${x}, ${y}`,
-        timeline: chronicle
-    });
 });
 
 // --- GET COORDINATE ---
@@ -634,10 +701,16 @@ app.get('/api/coordinate', (req, res) => {
     }
 
     log(`API request: GET /api/coordinate?x=${x}&y=${y}`);
-    loadCoordinate(x, y);
-    const chunkData = serializeChunk(x, y);
-    unloadCoordinate(x, y);
-    res.json(chunkData);
+    try {
+        loadCoordinate(x, y);
+        const chunkData = serializeChunk(x, y);
+        unloadCoordinate(x, y);
+        res.json(chunkData);
+    } catch (err) {
+        unloadCoordinate(x, y);
+        log(`Coordinate load error at (${x}, ${y}): ${err.message}`);
+        res.status(500).json({ error: err.message, code: 'COORDINATE_LOAD_ERROR' });
+    }
 });
 
 // --- POST ACTION ---
@@ -652,11 +725,16 @@ app.post('/api/action/:actionType', (req, res) => {
     }
 
     const coordinateString = `world_X${xInt}_Y${yInt}`;
-    const result = executeActionByType(actionType, coordinateString, target, item, itemId, newRole, playerState, xInt, yInt);
-    if (result.success) {
-        res.json({ message: result.message, playerState: result.playerState, chunkData: result.chunkData });
-    } else {
-        res.status(400).json({ error: result.message });
+    try {
+        const result = executeActionByType(actionType, coordinateString, target, item, itemId, newRole, playerState, xInt, yInt);
+        if (result.success) {
+            res.json({ message: result.message, playerState: result.playerState, chunkData: result.chunkData });
+        } else {
+            res.status(400).json({ error: result.message });
+        }
+    } catch (err) {
+        log(`Action dispatch error for ${actionType}: ${err.message}`);
+        res.status(500).json({ error: err.message, code: 'ACTION_DISPATCH_ERROR' });
     }
 });
 

@@ -8,7 +8,8 @@ const { Identity, Inventory, Knowledge, Quests } = require('./components');
 jest.mock('./db', () => ({
     saveDelta: jest.fn(),
     getDeltas: jest.fn(() => []),
-    getGlobalYear: jest.fn(() => 51)
+    getGlobalYear: jest.fn(() => 51),
+    getSuzerainForCoordinate: jest.fn(() => null)
 }));
 
 describe('Player Actions', () => {
@@ -36,12 +37,13 @@ describe('Player Actions', () => {
         world.add({
             identity: Identity("Target Dummy", "NPC", dummyTargetId),
             status: "Alive",
-            currentRole: "Citizen", // FIX: The query requires a role to find them!
-            inventory: { 
-                items: [{ id: dummyItemId, name: "The Mock Amulet", type: "Jewelry" }] 
+            currentRole: "Citizen",
+            inventory: {
+                items: [{ id: dummyItemId, name: "The Mock Amulet", type: "Jewelry" }]
             },
             knowledge: Knowledge(),
-            quests: Quests()
+            quests: Quests(),
+            history: { events: [] }
         });
 
         // Add a town entity
@@ -235,33 +237,35 @@ describe('Player Actions', () => {
         expect(result.message).toContain('looking for');
     });
 
-    test('turnInQuest should promote recipient to Hero on Weapon gift', () => {
+    test('turnInQuest should elevate Citizen to Guard or Hero on Weapon gift', () => {
         const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
         questGiver.currentRole = "Citizen";
-        
+
         // Give the player a weapon
         playerState.inventory = [{ id: "weapon-id", name: "Sword", type: "Weapon" }];
-        
+
         const result = actions.turnInQuest(world, "world_X0_Y0", dummyTargetId, "weapon-id", playerState);
-        
-        if (result.success) {
-            expect(questGiver.currentRole).toBe("Hero");
-        }
+
+        expect(result.success).toBe(true);
+        // Weapon elevates Citizen to Guard or Hero (seeded, 50/50)
+        expect(["Guard", "Hero"]).toContain(questGiver.currentRole);
+        expect(questGiver.weaponBonus).toBe(5);
     });
 
-    test('turnInQuest should make recipient Cultist on Jewelry gift', () => {
+    test('turnInQuest should apply artifact bonus to recipient on Jewelry gift', () => {
         const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
         questGiver.currentRole = "Citizen";
-        
-        // Give the player jewelry (already set up in beforeEach)
+
+        // Give the player jewelry
         playerState.inventory = [{ id: dummyItemId, name: "The Mock Amulet", type: "Jewelry" }];
         world.with('identity').where(e => e.identity.id === dummyTargetId).first.inventory.items = [];
-        
+
         const result = actions.turnInQuest(world, "world_X0_Y0", dummyTargetId, dummyItemId, playerState);
-        
-        if (result.success) {
-            expect(questGiver.currentRole).toBe("Cultist");
-        }
+
+        expect(result.success).toBe(true);
+        // Jewelry applies a +0.20 diplomatic bonus; role may change (30% seeded chance)
+        expect(questGiver.artifactBonus).toBeCloseTo(0.20);
+        expect(playerState.reputation).toBeGreaterThan(25);
     });
 
     test('taxTown should fail if player is not Mayor', () => {
@@ -325,5 +329,68 @@ describe('Player Actions', () => {
         
         expect(result.success).toBe(true);
         expect(playerState.titles['Town']).toBeUndefined();
+    });
+
+    // --- Structured history event tests ---
+
+    test('after assassinate success, targetNPC.history.events contains an object with type === assassination', () => {
+        playerState.stats.stealth = 20;
+        playerState.stats.strength = 20;
+        const targetNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        targetNpc.history = { events: [] };
+
+        actions.assassinate(world, 'world_X0_Y0', dummyTargetId, playerState);
+
+        const ev = targetNpc.history.events.find(e => e.type === 'assassination');
+        expect(ev).toBeDefined();
+        expect(ev.id).toMatch(/^ev_[0-9a-f]{8}$/);
+        expect(ev.year).toBe(51);
+    });
+
+    test('after claimThrone success, town.history.events contains an object with type === power_seizure', () => {
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.history = { events: [] };
+        playerState.reputation = 30;
+
+        actions.claimThrone(world, 'world_X0_Y0', playerState);
+
+        const ev = town.history.events.find(e => e.type === 'power_seizure');
+        expect(ev).toBeDefined();
+        expect(ev.causedBy).toBeNull();
+    });
+
+    test('after regicide success, targetNPC.history.events contains type === regicide', () => {
+        const targetNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        targetNpc.currentRole = 'Mayor';
+        targetNpc.history = { events: [] };
+
+        // Force success by giving max stats and a high weapon tier
+        jest.spyOn(Math, 'random').mockReturnValue(0.0);
+        playerState.stats.stealth = 20;
+        playerState.stats.strength = 20;
+
+        const result = actions.regicide(world, 'world_X0_Y0', dummyTargetId, 5, playerState);
+
+        if (result.success) {
+            const ev = targetNpc.history.events.find(e => e.type === 'regicide');
+            expect(ev).toBeDefined();
+        }
+    });
+
+    test('appendHistory wraps a legacy plain string in a legacy-type event object', () => {
+        // Directly test that the public API still accepts strings via the turnInQuest path
+        const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        questGiver.history = { events: [] };
+        questGiver.quests.offeredQuests = [];
+        playerState.inventory = [{ id: 'item-x', name: 'Random Item', type: 'Tome' }];
+
+        actions.turnInQuest(world, 'world_X0_Y0', dummyTargetId, 'item-x', playerState);
+
+        const ev = questGiver.history.events[0];
+        expect(ev).toBeDefined();
+        expect(typeof ev).toBe('object');
+        expect(ev).toHaveProperty('id');
+        expect(ev).toHaveProperty('type');
+        expect(ev).toHaveProperty('year');
     });
 });

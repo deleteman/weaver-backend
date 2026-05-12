@@ -1,10 +1,15 @@
 // src/actions.js
-const { saveDelta, getDeltas, getGlobalYear } = require('./db');
+const { saveDelta, getDeltas, getGlobalYear, getSuzerainForCoordinate } = require('./db');
+const { log } = require('./logger');
+const { makeEvent } = require('./event-utils');
+const seedrandom = require('seedrandom');
+const { ArtifactEffects } = require('./artifact-effects');
+const { PlayerMechanics } = require('./player-mechanics');
 
 const LOG_PREFIX = '[ACTION]';
 
 function actionLog(event, details = {}) {
-    console.log(`${LOG_PREFIX} ${event}`, details);
+    log(`${LOG_PREFIX} ${event}`, details);
 }
 
 function ensurePlayerState(playerState) {
@@ -26,12 +31,13 @@ function persistInventory(coordinate, entity) {
 
 function appendHistory(coordinate, entity, event) {
     if (!entity) return;
-    if (!Array.isArray(entity.history)) {
-        entity.history = entity.history ? [entity.history] : [];
+    if (!entity.history || !Array.isArray(entity.history.events)) {
+        entity.history = { events: [] };
     }
-    entity.history.push(event);
-    saveDelta(coordinate, entity.identity.id, 'history_append', event);
-    actionLog('appendHistory', { coordinate, entityId: entity.identity.id, event });
+    const evObj = typeof event === 'string' ? makeEvent(event, 'legacy') : event;
+    entity.history.events.push(evObj);
+    saveDelta(coordinate, entity.identity.id, 'history_append', JSON.stringify(evObj));
+    actionLog('appendHistory', { coordinate, entityId: entity.identity.id, eventId: evObj.id });
 }
 
 function awardXP(playerState, amount) {
@@ -68,6 +74,20 @@ function getCurrentYear(coordinateString) {
     return getGlobalYear();
 }
 
+function applyReputationWithPropagation(playerState, coordinate, baseAmount, isFailed = false) {
+    const suzerainKey = getSuzerainForCoordinate(coordinate);
+    const isColony = suzerainKey !== null;
+    const { local, suzerain } = PlayerMechanics.calculateReputationDelta('action', baseAmount, isColony, isFailed);
+
+    playerState.reputation += local;
+
+    if (!playerState.reputationMap) playerState.reputationMap = {};
+    playerState.reputationMap[coordinate] = (playerState.reputationMap[coordinate] || 0) + local;
+    if (suzerain !== undefined && suzerainKey) {
+        playerState.reputationMap[suzerainKey] = (playerState.reputationMap[suzerainKey] || 0) + suzerain;
+    }
+}
+
 function stealItem(world, coordinate, targetId, itemId, playerState) {
     actionLog('stealItem:start', { coordinate, targetId, itemId });
     playerState = ensurePlayerState(playerState);
@@ -91,14 +111,16 @@ function stealItem(world, coordinate, targetId, itemId, playerState) {
     const failChance = Math.max(0.10, 0.60 - (playerState.stats.stealth * 0.05));
     actionLog('stealItem:roll', { targetId, itemId, failChance });
 
+    // Intentional non-deterministic player-experience roll — not a generation path
     if (Math.random() < failChance) {
         targetNPC.inventory.items.splice(itemIndex, 0, targetItem);
         persistInventory(coordinate, targetNPC);
 
-        playerState.reputation -= 10;
+        applyReputationWithPropagation(playerState, coordinate, -10, true);
         let msg = `You were caught trying to steal ${targetItem.name}! Your reputation fell.`;
 
         if (playerState.inventory.length > 0) {
+            // Intentional non-deterministic player-experience roll — not a generation path
             const lostItem = playerState.inventory.splice(Math.floor(Math.random() * playerState.inventory.length), 1)[0];
             targetNPC.inventory.items.push(lostItem);
             persistInventory(coordinate, targetNPC);
@@ -139,23 +161,24 @@ function assassinate(world, coordinate, targetId, playerState) {
     if (targetNPC.currentRole === "Guard") successChance -= 0.30;
     if (targetNPC.currentRole === "Mayor") successChance -= 0.40;
 
+    // Intentional non-deterministic player-experience roll — not a generation path
     if (Math.random() < successChance) {
         targetNPC.status = "Dead";
         saveDelta(coordinate, targetNPC.identity.id, "status", "Dead");
-        appendHistory(coordinate, targetNPC, `[Year ${currentYear}] Assassinated by a mysterious traveler.`);
+        appendHistory(coordinate, targetNPC, makeEvent(`[Year ${currentYear}] Assassinated by a mysterious traveler.`, 'assassination'));
         
         let msg = `🗡️ You assassinated ${targetNPC.identity.name}!`;
         const leveled = awardXP(playerState, 75);
 
         if (targetNPC.currentRole === "Mayor" && town.identity.type === "District") {
-            appendHistory(coordinate, town, `[Year ${currentYear}] A district administrator was slain by a traveler, but the parent city's rule endures.`);
+            appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] A district administrator was slain by a traveler, but the parent city's rule endures.`, 'assassination'));
             msg += ` The district is briefly leaderless, but it remains under its parent city's authority.`;
         } else if (targetNPC.currentRole === "Mayor" && playerState.reputation >= 20) {
             town.currentMayor = "The Player";
             saveDelta(coordinate, town.identity.name, "currentMayor", "The Player");
-            saveDelta(coordinate, town.identity.name, "history_append", `[Year ${currentYear}] The Mayor was slain, and the respected traveler seized control of the town.`);
+            appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] The Mayor was slain, and the respected traveler seized control of the town.`, 'chaos'));
             msg += ` The town respects your ruthless power. YOU are the new Mayor!`;
-            playerState.reputation += 50;
+            applyReputationWithPropagation(playerState, coordinate, 50);
 
             if (!playerState.titles) playerState.titles = {};
             playerState.titles[town.identity.name] = "Mayor";
@@ -163,15 +186,15 @@ function assassinate(world, coordinate, targetId, playerState) {
         } else if (targetNPC.currentRole === "Mayor") {
             town.currentMayor = "None";
             saveDelta(coordinate, town.identity.name, "currentMayor", "None");
-            saveDelta(coordinate, town.identity.name, "history_append", `[Year ${currentYear}] The Mayor was murdered, throwing the town into chaos.`);
+            appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] The Mayor was murdered, throwing the town into chaos.`, 'chaos'));
             msg += ` The town is in chaos without a Mayor. You are a wanted criminal.`;
-            playerState.reputation -= 40;
+            applyReputationWithPropagation(playerState, coordinate, -40);
         }
 
         if (leveled) msg += ` (+75 XP) YOU LEVELED UP TO LEVEL ${playerState.level}!`;
         return { success: true, message: msg };
     } else {
-        playerState.reputation -= 30;
+        applyReputationWithPropagation(playerState, coordinate, -30, true);
         return { success: false, message: `Attempt failed! You were spotted trying to kill ${targetNPC.identity.name}. Your reputation tanked.` };
     }
 }
@@ -209,22 +232,33 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
             playerState.inventory.splice(playerItemIndex, 1);
             questGiver.inventory.items.push(donatedItem);
 
-            let butterflyEvent = `[Year ${currentYear}] Received ${donatedItem.name} from a traveler.`;
-            
-            if (donatedItem.type === "Weapon" && questGiver.currentRole !== "Mayor") {
-                questGiver.currentRole = "Hero";
-                butterflyEvent = `[Year ${currentYear}] Was handed ${donatedItem.name} by a traveler and rose up as the town's new Hero.`;
-                saveDelta(coordinate, questGiver.identity.id, "currentRole", "Hero");
+            const coordMatch = coordinate.match(/world_X(-?\d+)_Y(-?\d+)/);
+            const cx = coordMatch ? parseInt(coordMatch[1]) : 0;
+            const cy = coordMatch ? parseInt(coordMatch[2]) : 0;
+            const artifactRng = seedrandom(`artifact_${donatedItem.id}_${coordinate}`);
+            const roleBeforeEffect = questGiver.currentRole;
+
+            if (donatedItem.type === "Weapon") {
+                ArtifactEffects.applyWeaponEffect(world, cx, cy, donatedItem, questGiver, artifactRng);
+            } else if (donatedItem.type === "Tome") {
+                ArtifactEffects.applyTomeEffect(world, cx, cy, donatedItem, questGiver, artifactRng);
             } else if (donatedItem.type === "Jewelry") {
-                questGiver.currentRole = "Cultist";
-                butterflyEvent = `[Year ${currentYear}] Put on ${donatedItem.name} delivered by a traveler and lost their mind to the abyss.`;
-                saveDelta(coordinate, questGiver.identity.id, "currentRole", "Cultist");
+                ArtifactEffects.applyJewelryEffect(world, cx, cy, donatedItem, questGiver, artifactRng);
+            } else if (donatedItem.type === "Relic") {
+                const npcs = Array.from(world.with('identity', 'status').where(e => e.identity.type === 'NPC' && e.status === 'Alive'));
+                ArtifactEffects.applyRelicEffect(world, cx, cy, donatedItem, questGiver, npcs, artifactRng);
             }
 
+            const roleChanged = questGiver.currentRole !== roleBeforeEffect;
+            if (roleChanged) {
+                saveDelta(coordinate, questGiver.identity.id, "currentRole", questGiver.currentRole);
+            }
+
+            const butterflyEvent = makeEvent(`[Year ${currentYear}] Received ${donatedItem.name} from a traveler${roleChanged ? ` and was transformed into a ${questGiver.currentRole}` : ''}.`, roleChanged ? 'career_shift' : 'legacy');
             appendHistory(coordinate, questGiver, butterflyEvent);
             persistInventory(coordinate, questGiver);
 
-            playerState.reputation += 20;
+            applyReputationWithPropagation(playerState, coordinate, 20);
             const leveled = processXP(playerState, 50);
             let msg = `🤝 You gave ${donatedItem.name} to ${questGiver.identity.name}. (+50 XP)`;
             if (leveled) msg += ` YOU LEVELED UP TO LEVEL ${playerState.level}!`;
@@ -254,10 +288,10 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
         if (avengedTargetName) {
             questGiver.knowledge.memories[avengedTargetId] = "avenged"; 
             saveDelta(coordinate, questGiver.identity.id, `memory_${avengedTargetId}`, "avenged");
-            appendHistory(coordinate, questGiver, `[Year ${currentYear}] Was finally avenged when the traveler eliminated ${avengedTargetName}.`);
+            appendHistory(coordinate, questGiver, makeEvent(`[Year ${currentYear}] Was finally avenged when the traveler eliminated ${avengedTargetName}.`, 'assassination'));
 
             maybeAwardTitle(playerState, 'bountiesCompleted', 3, 'Master Assassin');
-            playerState.reputation += 30;
+            applyReputationWithPropagation(playerState, coordinate, 30);
             const leveled = awardXP(playerState, 100);
             
             let msg = `🩸 You reported the death of ${avengedTargetName} to ${questGiver.identity.name}. (+100 XP)`;
@@ -295,10 +329,10 @@ function claimThrone(world, coordinate, playerState) {
     }
 
     saveDelta(coordinate, town.identity.name, "currentMayor", "The Player");
-    appendHistory(coordinate, town, `[Year ${currentYear}] With the seat empty, the traveler stepped up and claimed the title of Mayor.`);
+    appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] With the seat empty, the traveler stepped up and claimed the title of Mayor.`, 'power_seizure'));
 
     playerState.titles[town.identity.name] = "Mayor";
-    playerState.reputation += 30;
+    applyReputationWithPropagation(playerState, coordinate, 30);
 
     actionLog('claimThrone:success', { town: town.identity.name });
     return { success: true, message: `👑 You have stepped up to lead! You are now the Mayor of ${town.identity.name}!` };
@@ -335,7 +369,7 @@ function taxTown(world, coordinate, playerState) {
         }
     }
 
-    playerState.reputation -= (itemsStolen * 10);
+    applyReputationWithPropagation(playerState, coordinate, -(itemsStolen * 10));
     actionLog('taxTown:complete', { itemsStolen, reputation: playerState.reputation });
     return { success: true, message: `💰 You abused your power and taxed ${itemsStolen} items from the town. The people despise you.` };
 }
@@ -357,7 +391,7 @@ function decree(world, coordinate, targetId, newRole, playerState) {
 
     targetNPC.currentRole = newRole;
     saveDelta(coordinate, targetNPC.identity.id, "currentRole", newRole);
-    appendHistory(coordinate, targetNPC, `[Year ${currentYear}] Was officially decreed a ${newRole} by the Mayor.`);
+    appendHistory(coordinate, targetNPC, makeEvent(`[Year ${currentYear}] Was officially decreed a ${newRole} by the Mayor.`, 'career_shift'));
     actionLog('decree:success', { targetId, newRole });
 
     return { success: true, message: `📜 You have decreed ${targetNPC.identity.name} to be a ${newRole}.` };
@@ -380,10 +414,11 @@ function banish(world, coordinate, targetId, playerState) {
 
     targetNPC.status = "Exiled";
     saveDelta(coordinate, targetNPC.identity.id, "status", "Exiled");
-    appendHistory(coordinate, targetNPC, `[Year ${currentYear}] Stripped of titles and exiled from the town by the Mayor.`);
+    appendHistory(coordinate, targetNPC, makeEvent(`[Year ${currentYear}] Stripped of titles and exiled from the town by the Mayor.`, 'migration'));
     
-    const destX = Math.floor(Math.random() * 100);
-    const destY = Math.floor(Math.random() * 100);
+    const banishRng = seedrandom(`banish_${coordinate}_${getGlobalYear()}`);
+    const destX = Math.floor(banishRng() * 100);
+    const destY = Math.floor(banishRng() * 100);
     const destCoordinate = `world_X${destX}_Y${destY}`;
 
     targetNPC.knowledge.memories["The Player"] = "hates";
@@ -396,7 +431,7 @@ function banish(world, coordinate, targetId, playerState) {
     };
 
     saveDelta(destCoordinate, targetNPC.identity.id, "immigrant_data", JSON.stringify(immigrantData));
-    playerState.reputation -= 15;
+    applyReputationWithPropagation(playerState, coordinate, -15);
     actionLog('banish:success', { targetId, destination: destCoordinate });
 
     return { success: true, message: `🛑 You banished ${targetNPC.identity.name}. They were last seen wandering towards coordinates X:${destX}, Y:${destY} swearing revenge against you.` };
@@ -412,7 +447,8 @@ function abdicate(world, coordinate, playerState) {
     }
 
     const citizens = Array.from(world.with('identity', 'status', 'knowledge').where(e => e.identity.type === "NPC" && e.status === "Alive"));
-    let nextMayor = citizens[Math.floor(Math.random() * citizens.length)]; 
+    const abdicateRng = seedrandom(`abdicate_${coordinate}_${getGlobalYear()}`);
+    let nextMayor = citizens[Math.floor(abdicateRng() * citizens.length)];
 
     delete playerState.titles[town.identity.name];
     
@@ -420,14 +456,14 @@ function abdicate(world, coordinate, playerState) {
         nextMayor.currentRole = "Mayor";
         saveDelta(coordinate, nextMayor.identity.id, "currentRole", "Mayor");
         saveDelta(coordinate, town.identity.name, "currentMayor", nextMayor.identity.name);
-        appendHistory(coordinate, town, `[Year ${currentYear}] The traveler abdicated, and the people elected ${nextMayor.identity.name} as the new Mayor.`);
+        appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] The traveler abdicated, and the people elected ${nextMayor.identity.name} as the new Mayor.`, 'power_seizure'));
         
-        playerState.reputation += 25;
+        applyReputationWithPropagation(playerState, coordinate, 25);
         actionLog('abdicate:success', { nextMayorId: nextMayor.identity.id });
         return { success: true, message: `🕊️ You peacefully stepped down. ${nextMayor.identity.name} is the new Mayor.` };
     } else {
         saveDelta(coordinate, town.identity.name, "currentMayor", "NPC");
-        appendHistory(coordinate, town, `[Year ${currentYear}] The traveler abdicated, leaving the town leaderless.`);
+        appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] The traveler abdicated, leaving the town leaderless.`, 'power_seizure'));
         actionLog('abdicate:leaderless');
         return { success: true, message: `🕊️ You stepped down. With no one to replace you, the town is leaderless.` };
     }
@@ -454,9 +490,50 @@ function lootTomb(world, coordinate, targetId, playerState) {
     targetNPC.inventory.items = [];
     persistInventory(coordinate, targetNPC);
     
-    playerState.reputation -= 5;
+    applyReputationWithPropagation(playerState, coordinate, -5);
     actionLog('lootTomb:success', { targetId, lootedCount: lootedItems.length });
     return { success: true, message: `🦇 You looted the tomb of ${targetNPC.identity.name} and found: ${lootedItems.map(i => i.name).join(", ")}. (-5 Reputation)` };
 }
 
-module.exports = { stealItem, assassinate, claimThrone, turnInQuest, taxTown, decree, banish, abdicate, lootTomb };
+function regicide(world, coordinate, targetId, weaponTier, playerState) {
+    actionLog('regicide:start', { coordinate, targetId, weaponTier });
+    playerState = ensurePlayerState(playerState);
+
+    const targetNPC = findEntity(world, targetId, ['identity', 'status', 'currentRole']);
+    const town = world.with('identity', 'history').where(e => e.identity.type === 'Town' || e.identity.type === 'District').first;
+    const currentYear = getCurrentYear(coordinate);
+
+    if (!targetNPC || targetNPC.status === 'Dead') {
+        return { success: false, message: 'Target not found or already dead.' };
+    }
+    if (targetNPC.currentRole !== 'Mayor') {
+        return { success: false, message: 'Regicide requires targeting the ruling Mayor.' };
+    }
+
+    const { success } = PlayerMechanics.resolveRegicide(playerState, weaponTier || 0);
+
+    if (success) {
+        targetNPC.status = 'Dead';
+        saveDelta(coordinate, targetNPC.identity.id, 'status', 'Dead');
+        appendHistory(coordinate, targetNPC, makeEvent(`[Year ${currentYear}] Slain by the Traveler in an act of regicide.`, 'regicide'));
+
+        if (town) {
+            town.currentMayor = 'The Player';
+            saveDelta(coordinate, town.identity.name, 'currentMayor', 'The Player');
+            appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] The ruler was slain and the Traveler seized the throne.`, 'regicide'));
+        }
+
+        if (!playerState.titles) playerState.titles = {};
+        playerState.titles[town ? town.identity.name : coordinate] = 'King';
+
+        const leveled = awardXP(playerState, 5000);
+        let msg = `⚔️ Regicide! You have slain ${targetNPC.identity.name} and seized the throne!`;
+        if (leveled) msg += ` (+5000 XP) YOU LEVELED UP TO LEVEL ${playerState.level}!`;
+        return { success: true, message: msg };
+    } else {
+        applyReputationWithPropagation(playerState, coordinate, -50);
+        return { success: false, message: `Regicide attempt failed. You were repelled and your reputation is in tatters.` };
+    }
+}
+
+module.exports = { stealItem, assassinate, claimThrone, turnInQuest, taxTown, decree, banish, abdicate, lootTomb, regicide };
