@@ -13,8 +13,10 @@ function replenishPopulationIfNeeded(world, x, y, rng, townEntity, biome, curren
     const npcs = Array.from(world.with('identity', 'status')
         .where(e => e.location.x === x && e.location.y === y && e.identity.type === "NPC" && e.status === "Alive"));
     
-    if (npcs.length < 5) {
-        const spawnCount = Math.floor(rng() * 5) + 3; // 3-7 new NPCs
+    const tier = townEntity?.political?.tier || 1;
+    const tierMinimum = Math.max(5, tier * 5);
+    if (npcs.length < tierMinimum) {
+        const spawnCount = Math.floor(rng() * 5) + Math.max(3, tier * 2);
         const currentCoordinate = `world_X${x}_Y${y}`;
         
         for (let i = 0; i < spawnCount; i++) {
@@ -39,7 +41,7 @@ function replenishPopulationIfNeeded(world, x, y, rng, townEntity, biome, curren
             npcs.push(newNpc);
         }
         
-        log('population-replenishment', { coordinate: `${x},${y}`, spawnedCount: spawnCount, reason: npcs.length < 3 ? 'refugee-crisis' : 'baby-boom' });
+        log('population-replenishment', { coordinate: `${x},${y}`, spawnedCount: spawnCount, tier, tierMinimum, reason: npcs.length < 3 ? 'refugee-crisis' : 'baby-boom' });
     }
 }
 

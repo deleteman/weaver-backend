@@ -24,6 +24,7 @@ Project Weaver is a fully functional Just-In-Time (JIT) Procedural RPG Engine ca
 - ✅ **Fog of War**: Lightweight mini-map generation with territory ownership (`claimedBy` / `claimedByName` / `districtType` per tile; sovereign tiles return `null` for all three)
 - ✅ **NPC Appearance System**: Fully structured, deterministic appearance objects per NPC — eye colour, skin tone, biome-weighted skin distribution, age-driven hair/build/height progression, role-tiered clothing, and rare marks (scars, tattoos, birthmarks)
 - ✅ **Tile Description System**: Every chunk response includes a `tileDescription` object with discrete fields for size, atmosphere, walls, streets, surroundings, landmark, and role-derived buildings. Map tiles include a lighter `tileDescription` (terrain, vegetation, settlementSilhouette) computed without ECS instantiation.
+- ✅ **Settlement Economy Simulation**: Per-decade production/consumption loop with Economic Boom and Famine events; Time Capsule discovery and trigger system (Banking Guild, Hyperinflation, Scholarly/Militaristic traits); Macro trade routes with Ruin partner severance and Shortage modifiers; Ruin Hoard locking and recovery via `loot_tomb`.
 
 ---
 
@@ -59,6 +60,9 @@ const BIOME_DEMOGRAPHICS = {
 - `getBiomeDemographics(biome)` - Get demographic weights
 - `determinePoliticalStance(demographics)` - Assign town stance (Aggressive, Federation, Occult, Balanced)
 - `countDemographics(npcs)` - Analyze current NPC composition
+
+**Constants**:
+- `BIOME_PRIMARY_EXPORT` — maps each biome to a pair of export goods (e.g. `Mountain → ['Iron', 'Stone']`). One export is picked deterministically per coordinate using `seedrandom(coordinate + "_export")`.
 
 **Integration**: Modified `index.js` to:
 - Call `determineBiome()` during base generation
@@ -178,14 +182,53 @@ Enhancements:
 - Migration tracking with delta persistence
 - Artifact generation system
 
+### Phase 9: Settlement Economy Simulation ✅
+**File**: `src/economy.js` (new)
+
+Implements macro-economic simulation called once per decade during `simulateHistory()`:
+
+```javascript
+simulate_economy(town, years, rng, coordinate, globalYear)
+// Returns { events, tierDelta, modifierChanges, divergenceLog }
+```
+
+**Core per-decade loop:**
+- `baseProduction = tier * 100`; `baseConsumption = population * 10`
+- 2 consecutive decades with `net > 200` → **Economic Boom** (tier+1, `economicBoomYear` set)
+- 2 consecutive decades with `net < 0` → **Famine/Depression** event logged
+- Hyperinflation modifier reduces effective production by 75% for its duration
+
+**Time Capsule system (`_processCapsules`):**
+- `discoveryChance = min(95, ΔT × 0.5 + population / 10)` per unresolved capsule
+- `gold_npc` capsule: compounded value `> 5000` → Banking Guild founded, tier+1
+- `buried_gold` capsule: `gold > 5000` → Boom + Hyperinflation; 40% Ruin chance if no Merchant
+- `weapon` tier 3+: Militaristic trait added
+- `tome` tier 3+: Scholarly trait, +50% production bonus recorded
+
+**Trade route evaluation (`_evaluateTradeRoutes`):**
+- Each entry in `tradePartners` checked via `getTierForCoordinate()`
+- Tier-0 partners (Ruins) are severed with a `trade_route_collapse` event
+- If severed partner and town population < 10: `shortage: true` applied
+
+**Ruin Hoard (`lockRuinHoard`):**
+- Called from `simulateHistory()` when a settlement's tier drops to 0
+- Locks 50% of `town.regionalWealth` into a `ruin_hoard` delta
+- Recoverable via `loot_tomb` action on Ruin-tier coordinates
+
+**Town economic fields** (added to `generateTown()` in `index.js`):
+- `regionalWealth` — seeded at `tier × 500`
+- `primaryExport` — one value from `BIOME_PRIMARY_EXPORT[biome]`, deterministic
+- `tradePartners` — seeded for Tier 3+ towns: 1–3 nearest Tier 2+ neighbors
+- `economicModifiers` — `{ shortage, hyperinflation, hyperinflationExpiryYear, economicBoomYear }`
+
 ---
 
 ## Testing & Quality Assurance
 
 ### Test Coverage
-- **Total Tests**: 270 (all passing)
-- **Unit Tests**: 105 original + 55 integration/regression tests
-- **Test Suites**: 11 files
+- **Total Tests**: 320 (all passing)
+- **Unit Tests**: 105 original + 55 integration/regression tests + 17 economy tests
+- **Test Suites**: 16 files
 
 ### Test Categories
 1. **Component Tests** (src/components.test.js)
@@ -269,6 +312,7 @@ generator/
 │   ├── politics.js                   # Political engine
 │   ├── population.js                 # Population system
 │   ├── quests.js                     # Quest generation
+│   ├── economy.js                    # Settlement economy simulation (Item 20)
 │   └── [test files]                  # Comprehensive test suite
 ```
 
@@ -322,10 +366,10 @@ generator/
    - Multi-step quest chains
    - Reputation-locked quests
 
-3. **Trading System**
-   - NPC-to-NPC trading
-   - Price fluctuation based on supply/demand
-   - Player as merchant
+3. **Trading System** *(macro foundation implemented — Item 20)*
+   - ✅ Macro trade routes between Tier 3+ settlements
+   - ✅ Ruin partner severance + Shortage modifier
+   - NPC-to-NPC trading and price fluctuation (future item)
 
 4. **Guilds & Factions**
    - Player guild creation
@@ -387,9 +431,9 @@ The implementation is production-ready, fully tested, and extensible for future 
 
 ---
 
-**Completion Date**: May 8, 2026  
+**Last Updated**: May 13, 2026  
 **Implementation Time**: Complete  
-**Test Status**: 270/270 passing ✅  
+**Test Status**: 320/320 passing ✅  
 **Build Status**: ✅ Ready to deploy
 
 ---

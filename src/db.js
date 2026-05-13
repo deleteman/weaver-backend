@@ -80,6 +80,19 @@ function getSuzerainForCoordinate(key) {
     return suzerainDelta ? suzerainDelta.state_value : null;
 }
 
-// Update the exports to include it!
-module.exports = { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, getSuzerainForCoordinate };
+function getCapsuleDeltas(coordinate) {
+    const stmt = db.prepare(
+        `SELECT * FROM deltas WHERE coordinate = ? AND state_key LIKE 'capsule_%' ORDER BY id ASC`
+    );
+    return stmt.all(coordinate);
+}
+
+function getRuinHoard(coordinate) {
+    const stmt = db.prepare(
+        `SELECT state_value FROM deltas WHERE coordinate = ? AND state_key = 'ruin_hoard' ORDER BY id DESC LIMIT 1`
+    );
+    return stmt.get(coordinate) || null;
+}
+
+module.exports = { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, getSuzerainForCoordinate, getCapsuleDeltas, getRuinHoard };
 

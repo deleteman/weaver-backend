@@ -9,7 +9,9 @@ jest.mock('./db', () => ({
     saveDelta: jest.fn(),
     getDeltas: jest.fn(() => []),
     getGlobalYear: jest.fn(() => 51),
-    getSuzerainForCoordinate: jest.fn(() => null)
+    getSuzerainForCoordinate: jest.fn(() => null),
+    getTierForCoordinate: jest.fn(() => 1),
+    getRuinHoard: jest.fn(() => null)
 }));
 
 describe('Player Actions', () => {

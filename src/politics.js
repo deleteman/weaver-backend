@@ -162,6 +162,15 @@ class PoliticalEngine {
     }
 
     /**
+     * Check if a settlement should demote due to population decay.
+     * Triggers when population drops below half the tier's entry requirement.
+     */
+    static shouldDemote(settlement) {
+        const minPop = settlement.tier * 5;
+        return settlement.tier > 1 && settlement.population < minPop;
+    }
+
+    /**
      * Promote a settlement to the next tier
      */
     static promoteSettlement(settlement) {

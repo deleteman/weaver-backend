@@ -1,6 +1,6 @@
 # Project Weaver: Engine Architecture & PRD
 
-**Version:** 3.3 (NPC Appearance System)
+**Version:** 4.0 (Settlement Economy Simulation)
 **Product Type:** Just-In-Time Procedural RPG Engine (Backend API)
 
 ## 1. Executive Summary
@@ -49,6 +49,7 @@ The engine utilizes `miniplex`. Every actor, town, and child is an entity compos
 | `Status` | `state` (enum) | `Alive`, `Dead`, `Migrated`, `Exiled`. | 
 | `Political` | `tier` (int), `demographics` | Tracks settlement size (1-5) and dominant traits (e.g., "Scholar Heavy"). | 
 | `Diplomacy` | `allies`, `colonies`, `suzerain` | Arrays of Coordinate keys mapping macro-level relationships. | 
+| `Economy` (Town fields) | `regionalWealth`, `primaryExport`, `tradePartners`, `economicModifiers` | Settlement-level economic state. `regionalWealth` seeded at `tier × 500`. `primaryExport` is one good from `BIOME_PRIMARY_EXPORT`, deterministic per coordinate. `tradePartners` is an array of coordinate keys (seeded for Tier 3+ towns). `economicModifiers` tracks `{ shortage, hyperinflation, hyperinflationExpiryYear, economicBoomYear }`. | 
 
 ## 4. NPC Lifecycle & Micro-Simulations
 
@@ -71,6 +72,16 @@ When a coordinate is generated, its biome deterministically dictates its initial
 **Political AI Application:** The engine tallies these roles at the end of base generation. The town's governing AI is locked into a macro-political stance based on which groups cross a 50% threshold (e.g., *Aggressive* if Guards+Bandits > 50%, *Federation* if Scholars+Merchants > 50%).
 
 **Population Replenishment Rule:** To prevent JIT towns from dying out over long Future Passes (e.g., 200 years of simulation), a check runs every simulated decade. If the living population falls below 5, a "Refugee Crisis" or "Baby Boom" event is triggered, instantly spawning `Math.floor(rng() * 5) + 3` new NPCs matching the biome's demographic weights.
+
+**Biome Primary Export:** Each biome maps to a pair of export goods via `BIOME_PRIMARY_EXPORT`. One export is assigned deterministically to every coordinate at generation time using `seedrandom(coordinate + "_export")`:
+
+| Biome | Export Options |
+|-------|----------------|
+| Mountain | Iron, Stone |
+| Forest | Timber, Game |
+| Desert | Spice, Glass |
+| Marsh | Peat, Alchemical Herbs |
+| Plains | Grain, Livestock |
 
 ### 4.2. Migration Tracking & Schrödinger's Immigrant
 
@@ -191,9 +202,55 @@ When expansion limits are reached, Aggressive or Opportunistic towns invade. The
 
    * **Win Margin < 0 (Defeat):** Invasion fails. Invading Mayor loses 50% of their Guard population (marked as Dead).
 
-## 6. Player Agency & Progression Mechanics
+## 6. Settlement Economy Simulation
 
-### 6.1. XP, Leveling, and Stats
+Each settlement runs a decade-scale economic simulation during `simulateHistory()`. The simulation is deterministic (same seeded RNG), pure (returns mutations rather than mutating state), and independent from the NPC-level simulation.
+
+### 6.1. Production / Consumption Loop
+
+For each simulated decade:
+
+- `baseProduction = tier × 100` (reduced by 75% if hyperinflation is active)
+- `baseConsumption = population × 10`
+- `net = baseProduction − baseConsumption`
+
+**Boom:** `net > 200` for **2 consecutive decades** → `tier++`, `economicBoomYear` recorded, event pushed.  
+**Famine:** `net < 0` for **2 consecutive decades** → Famine/Depression event pushed (no tier change).
+
+### 6.2. Time Capsule System
+
+Capsule deltas stored as `capsule_*` state_key rows are checked each time the economy runs. Discovery uses:
+
+```
+discoveryChance = min(95, ΔT × 0.5 + population / 10)
+```
+
+Trigger table (once resolved, a capsule never triggers again):
+
+| Capsule Type | Trigger Condition | Effect |
+|---|---|---|
+| `gold_npc` | `gold × 1.02^ΔT > 5000` | Banking Guild founded, tier+1 |
+| `buried_gold` | `gold > 5000` | Boom (tier+1) + Hyperinflation (×0.25 production for 100 yrs); 40% Ruin chance without a Merchant present |
+| `weapon` (tier 3+) | Discovered | Militaristic trait applied |
+| `tome` (tier 3+) | Discovered | Scholarly trait applied; +50% production bonus |
+
+### 6.3. Trade Routes
+
+Tier 3+ settlements seed `tradePartners` at generation: 1–3 nearest Tier 2+ neighbours, deterministic via `seedrandom(coordinate + "_trade")`.
+
+Each time `simulate_economy()` runs, every trade partner is checked via `getTierForCoordinate()`:
+- **Tier 0 (Ruin):** Link severed; `trade_route_collapse` event pushed. If the dependent town has `population < 10`: `shortage: true` set on `economicModifiers`.
+- **Tier > 0:** Link preserved.
+
+### 6.4. Ruin Hoard
+
+When a settlement's tier drops to 0 during `simulateHistory()`, `lockRuinHoard()` is called:
+- Locks `Math.floor(regionalWealth × 0.5)` into a `ruin_hoard` delta for the coordinate.
+- The `/api/action/loot_tomb` action checks for this hoard: always yields randomised gold; 10% chance of a recovered artifact if a hoard row exists.
+
+## 7. Player Agency & Progression Mechanics
+
+### 7.1. XP, Leveling, and Stats
 
 The `playerState` maintains core stats that govern the success rates of backend actions.
 
@@ -206,7 +263,7 @@ The `playerState` maintains core stats that govern the success rates of backend 
 
 * **Leveling:** Every 100 XP grants 1 Level. Each level allows the client to increment `stealth` or `strength` by 1.
 
-### 6.2. Action Resolution Checks
+### 7.2. Action Resolution Checks
 
 * **`/api/action/steal`**: `FailChance = Math.max(0.10, 0.60 - (playerState.stats.stealth * 0.05))`. Failure drops coordinate reputation by 10 and confiscates a random player artifact.
 
@@ -214,7 +271,7 @@ The `playerState` maintains core stats that govern the success rates of backend 
 
 * **`/api/action/regicide` (Kingdom Takeover):** Targets the living Mayor at any coordinate (not Districts). `FailChance = 0.95 - (stealth × 0.01) - (strength × 0.01) - (weaponTier × 0.05)`. Success marks the Mayor `Dead`, writes a `regicide` history event on the town, awards +5000 XP, and installs the player as Mayor. Failure deducts −50 reputation and writes a `chaos` history event.
 
-### 6.3. Coordinate-Scoped Reputation
+### 7.3. Coordinate-Scoped Reputation
 
 Reputation is tracked in two parallel fields on `playerState`:
 
@@ -233,12 +290,12 @@ Reputation is tracked in two parallel fields on `playerState`:
 
 All player actions route through `applyReputationWithPropagation()`, which calls `PlayerMechanics.calculateReputationDelta()` and writes the delta to both fields. If the action coordinate is a Colony tile, a portion of the delta is propagated to the suzerain's entry in `reputationMap`.
 
-## 7. Spatial Visibility (Fog of War API)
+## 8. Spatial Visibility (Fog of War API)
 To allow the frontend to render mini-maps or neighbor tiles without crashing the server by simulating 9 chunks simultaneously, a lightweight metadata endpoint is used.
 
 Endpoint: `GET /api/map/:x/:y/:radius`
 
-### 7.1. Performance & Execution
+### 8.1. Performance & Execution
 No ECS Instantiation: The engine bypasses Miniplex entirely.
 
 **Math Only**: It runs the coordinate seed through a fast table to determine the biome and base settlement presence.

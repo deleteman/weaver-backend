@@ -55,7 +55,6 @@ All chunk loading must follow this order. Do not skip or reorder passes:
 
 ## Code Style
 
-- **ES Modules only** — `import`/`export`, never `require()`/`module.exports`
 - **Destructure imports**: `import { foo, bar } from './module.js'` not `import mod from './module.js'`
 - **No TypeScript** — plain JS with JSDoc comments for complex types
 - **Async/await** everywhere — no raw Promise chains or callbacks
@@ -281,6 +280,9 @@ Rules:
 | `jest` | Test runner | Config in `package.json` |
 
 ---
+
+## When working off of a TODO list
+- Always review the sources of truth and if the implementation adds/changes something, ask to update those files
 
 ## When You're Unsure
 

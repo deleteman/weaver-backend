@@ -5,7 +5,9 @@ const { simulateHistory } = require('./history');
 // Mock the db module to avoid database calls
 jest.mock('./db', () => ({
     saveDelta: jest.fn(),
-    getTierForCoordinate: jest.fn(() => 0)
+    upsertDelta: jest.fn(),
+    getTierForCoordinate: jest.fn(() => 0),
+    getCapsuleDeltas: jest.fn(() => [])
 }));
 
 describe('History Simulation', () => {

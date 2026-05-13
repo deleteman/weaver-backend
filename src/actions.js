@@ -1,5 +1,6 @@
 // src/actions.js
-const { saveDelta, getDeltas, getGlobalYear, getSuzerainForCoordinate } = require('./db');
+const { saveDelta, getDeltas, getGlobalYear, getSuzerainForCoordinate, getTierForCoordinate, getRuinHoard } = require('./db');
+const { generateArtifact } = require('./items');
 const { log } = require('./logger');
 const { makeEvent } = require('./event-utils');
 const seedrandom = require('seedrandom');
@@ -474,8 +475,31 @@ function lootTomb(world, coordinate, targetId, playerState) {
     actionLog('lootTomb:start', { coordinate, targetId });
     playerState = ensurePlayerState(playerState);
 
+    // Ruin Hoard path: when the tile itself is a Ruin (tier 0), yield gold + possible item
+    const tileTier = getTierForCoordinate(coordinate);
+    if (tileTier === 0) {
+        const currentYear = getGlobalYear();
+        const ruinRng = seedrandom(`${coordinate}_loot_${currentYear}`);
+        const goldFound = Math.floor(ruinRng() * 10 + 1) * 100;
+
+        if (!playerState.inventory) playerState.inventory = [];
+        if (typeof playerState.gold !== 'number') playerState.gold = 0;
+        playerState.gold += goldFound;
+
+        let lootedItem = null;
+        const hoardRow = getRuinHoard(coordinate);
+        if (hoardRow && ruinRng() < 0.10) {
+            lootedItem = generateArtifact(ruinRng, coordinate, currentYear, 'ruin_hoard');
+            playerState.inventory.push(lootedItem);
+        }
+
+        actionLog('lootTomb:ruin-hoard', { coordinate, goldFound, itemFound: lootedItem?.name || null });
+        const itemPart = lootedItem ? ` and ${lootedItem.name}` : '';
+        return { success: true, message: `You looted the ruin and found ${goldFound}g${itemPart}.` };
+    }
+
     const targetNPC = findEntity(world, targetId, ['identity', 'inventory', 'status']);
-    
+
     if (!targetNPC || targetNPC.status === "Alive") {
         actionLog('lootTomb:invalid-target', { targetId });
         return { success: false, message: `Target not found or is still alive!` };
@@ -489,7 +513,7 @@ function lootTomb(world, coordinate, targetId, playerState) {
     playerState.inventory.push(...lootedItems);
     targetNPC.inventory.items = [];
     persistInventory(coordinate, targetNPC);
-    
+
     applyReputationWithPropagation(playerState, coordinate, -5);
     actionLog('lootTomb:success', { targetId, lootedCount: lootedItems.length });
     return { success: true, message: `🦇 You looted the tomb of ${targetNPC.identity.name} and found: ${lootedItems.map(i => i.name).join(", ")}. (-5 Reputation)` };

@@ -6,13 +6,13 @@ const seedrandom = require('seedrandom');
 const { Identity, Location, History, Knowledge, Inventory, Quests, Status, Political, Diplomacy } = require('./src/components');
 const { PoliticalEngine } = require('./src/politics'); 
 const { generateText } = require('./src/grammar');
-const { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity } = require('./src/db');
+const { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate } = require('./src/db');
 const { simulateHistory } = require('./src/history');
 const { generateQuests } = require('./src/quests');
 const actions = require('./src/actions'); 
-const { generateMiniMap, estimateTierFromTime, CLAIM_RADIUS_BY_TIER, DISTRICT_TYPES } = require('./src/map');
+const { generateMiniMap, estimateTierFromTime, CLAIM_RADIUS_BY_TIER, DISTRICT_TYPES, getAdjacentTiles } = require('./src/map');
 const { BloomFilter } = require('./src/bloom-filter');
-const { determineBiome, assignRoleByBiome, getBiomeDemographics, determinePoliticalStance } = require('./src/biomes');
+const { determineBiome, assignRoleByBiome, getBiomeDemographics, determinePoliticalStance, BIOME_PRIMARY_EXPORT } = require('./src/biomes');
 const cors = require("cors");
 // Add this to your requires at the top of index.js
 const crypto = require('crypto');
@@ -36,14 +36,28 @@ function generateTown(world, x, y, rng) {
     const currentCoordinate = `world_X${x}_Y${y}`;
     const townName = generateText(rng, "#townName#");
     const townId = crypto.createHash('md5').update(`${currentCoordinate}_${townName}_town`).digest('hex').substring(0, 12);
-    
+
+    const biome = determineBiome(x, y);
+    const exportOptions = BIOME_PRIMARY_EXPORT[biome] || BIOME_PRIMARY_EXPORT.Plains;
+    const exportRng = seedrandom(currentCoordinate + '_export');
+    const primaryExport = exportOptions[Math.floor(exportRng() * exportOptions.length)];
+
     const townEntity = world.add({
         identity: Identity(townName, "Town", townId),
         location: Location(x, y),
         history: { events: [] },
         currentMayor: "NPC",
         political: Political(1, {}),
-        population: 0
+        population: 0,
+        regionalWealth: 500,
+        primaryExport,
+        tradePartners: [],
+        economicModifiers: {
+            shortage: false,
+            hyperinflation: false,
+            hyperinflationExpiryYear: null,
+            economicBoomYear: null
+        }
     });
     log(`Generated town: ${townName} at (${x}, ${y})`);
     return townEntity;
@@ -154,6 +168,16 @@ function injectImmigrantsAndApplyDeltas(world, x, y, townEntity, currentCoordina
         } else {
             log(`No entity found for delta: ${change.entity_name} ${change.state_key}`);
         }
+    }
+
+    // Seed trade partners for Tier 3+ towns that don't have them yet
+    if (townEntity && townEntity.political?.tier >= 3 && townEntity.tradePartners && townEntity.tradePartners.length === 0) {
+        const tradeRng = seedrandom(`${currentCoordinate}_trade`);
+        const neighbors = getAdjacentTiles(x, y);
+        const eligibleNeighbors = neighbors.filter(n => getTierForCoordinate(n.key) >= 2);
+        const count = Math.min(eligibleNeighbors.length, Math.floor(tradeRng() * 3) + 1);
+        townEntity.tradePartners = eligibleNeighbors.slice(0, count).map(n => n.key);
+        log(`Seeded ${townEntity.tradePartners.length} trade partners for ${townEntity.identity.name}`);
     }
 }
 
@@ -380,7 +404,7 @@ function unloadCoordinate(x, y) {
         }
     }
 
-    const entitiesAtLocation = world.with('location').where(e => e.location.x === x && e.location.y === y);
+    const entitiesAtLocation = Array.from(world.with('location').where(e => e.location.x === x && e.location.y === y));
     for (const entity of entitiesAtLocation) {
         world.remove(entity);
     }

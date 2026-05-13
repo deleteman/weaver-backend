@@ -123,9 +123,19 @@ function countDemographics(npcs) {
     return demographics;
 }
 
+const BIOME_PRIMARY_EXPORT = {
+    Mountain:   ['Iron', 'Stone'],
+    Forest:     ['Timber', 'Game'],
+    Desert:     ['Spice', 'Glass'],
+    Marsh:      ['Peat', 'Alchemical Herbs'],
+    Plains:     ['Grain', 'Livestock'],
+    Wilderness: ['Furs', 'Exotic Foraged Goods']
+};
+
 module.exports = {
     BIOME_TYPES,
     BIOME_DEMOGRAPHICS,
+    BIOME_PRIMARY_EXPORT,
     determineBiome,
     getBiomeDemographics,
     assignRoleByBiome,

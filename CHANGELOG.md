@@ -21,6 +21,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Colony reputation propagation: all player actions now route reputation changes through `applyReputationWithPropagation()`, which calls `PlayerMechanics.calculateReputationDelta()` and splits the delta between `playerState.reputation` (flat, backward-compatible) and a new `playerState.reputationMap` coordinate-keyed object that tracks per-location standing and propagates a portion to the suzerain if the tile is a colony.
 - `getAdjacentTiles(x, y)` helper added to `src/map.js` returning the 4 cardinal neighbors as `{ x, y, key }` objects.
 - `getTierForCoordinate(key)` and `getSuzerainForCoordinate(key)` added to `src/db.js` to query settlement tier and suzerain from the Delta store.
+- `src/economy.js`: new module exporting `simulate_economy(town, years, rng, coordinate, globalYear)` — runs a per-decade production/consumption loop, evaluates Economic Boom (2 consecutive net > 200 → tier++) and Famine (2 consecutive net < 0 → history event), processes Time Capsule deltas (Banking Guild, Hyperinflation, Scholarly/Militaristic traits), and evaluates trade route health.
+- `BIOME_PRIMARY_EXPORT` map added to `src/biomes.js`: each of the 5 biomes (plus forward-compat Wilderness) maps to a pair of export goods; one is picked deterministically from `seedrandom(coordinate + "_export")` at town generation.
+- Town entities now carry `regionalWealth`, `primaryExport`, `tradePartners`, and `economicModifiers` fields, initialized in `generateTown()` in `index.js`.
+- Trade partners seeded for Tier 3+ settlements after delta injection: 1–3 nearest Tier 2+ cardinal neighbors, deterministic per coordinate.
+- `simulate_economy()` called once per decade inside `simulateHistory()` in `src/history.js`; economic events are pushed to town history and tier changes applied back to the entity.
+- Ruin Hoard: when a settlement demotes to tier 0, 50% of `regionalWealth` is locked as a `ruin_hoard` delta via `lockRuinHoard()`.
+- `lootTomb` in `src/actions.js` gains a Ruin path: if the tile tier is 0, awards `(1d10) × 100` gold and a 10% chance to recover a `Tier 2+` artifact from the Ruin Hoard.
+- `getCapsuleDeltas(coordinate)` and `getRuinHoard(coordinate)` added to `src/db.js`.
 
 ### Changed
 - `src/artifact-effects.js`: all four static methods now accept an `rng` parameter instead of calling `Math.random()` directly, restoring full determinism for simulation paths.
@@ -29,6 +37,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Inline `require('./db')` inside `simulateHistory()` moved to the top-level module imports in `src/history.js`.
 
 ### Fixed
+- `src/index.test.js` beforeEach restores default mock implementations for `db.getDeltas`, `db.getGlobalYear`, and `db.getParentCity`. `jest.clearAllMocks()` only clears call history, so `mockReturnValue`/`mockImplementation` overrides from earlier tests (notably `getGlobalYear=10000` and `getParentCity='world_X8_Y9'`) leaked into later tests, causing the "status delta should mark a generated NPC as Dead" test to load coordinate (0,0) as a tier-5 district with a 500-year Future Pass on the first call and a tier-1 district on the second — different deterministic NPC IDs across the two loads, so the death delta couldn't be matched.
+- `unloadCoordinate()` in `index.js` now snapshots the entity query to an array before iterating and removing, avoiding any future iterator-invalidation surprises when `world.remove()` mutates the underlying bucket during the loop. The log count is now accurate (previously read `.length` from a Query object, printing `undefined`).
 - Four route handlers in `index.js` (`GET /api/chunk/:x/:y`, `GET /api/coordinate`, `GET /api/chunk/:x/:y/chronicle`, `POST /api/action/:actionType`) were unprotected. All now have `try/catch` blocks with structured `{ error, code }` responses and `unloadCoordinate` cleanup in the catch path to prevent stale ECS state.
 
 ### Fixed

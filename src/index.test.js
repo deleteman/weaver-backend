@@ -5,7 +5,10 @@ jest.mock('./db', () => ({
     upsertDelta: jest.fn(),
     getDeltas: jest.fn(() => []),
     getGlobalYear: jest.fn(() => 51),
-    getParentCity: jest.fn(() => null)
+    getParentCity: jest.fn(() => null),
+    getTierForCoordinate: jest.fn(() => 0),
+    getCapsuleDeltas: jest.fn(() => []),
+    getRuinHoard: jest.fn(() => null)
 }));
 
 const db = require('./db');
@@ -15,6 +18,12 @@ const { loadCoordinate, serializeChunk, unloadCoordinate } = require('../index')
 describe('Chunk Delta Application', () => {
     beforeEach(() => {
         jest.clearAllMocks();
+        // clearAllMocks() preserves implementations set via mockReturnValue/mockImplementation
+        // from earlier tests, which would leak (e.g. getGlobalYear=10000, getParentCity='world_X8_Y9')
+        // into tests that expect default behavior. Restore defaults explicitly.
+        db.getDeltas.mockImplementation(() => []);
+        db.getGlobalYear.mockImplementation(() => 51);
+        db.getParentCity.mockImplementation(() => null);
     });
 
     test('loadCoordinate should query getDeltas with the string coordinate key', () => {

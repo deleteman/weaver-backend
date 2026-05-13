@@ -162,6 +162,16 @@ Full 4-pass world load for a coordinate.
 | `regicide` | Ruler slain by the player; new ruler took power |
 | `legacy` | Miscellaneous player-triggered event (quest outcomes, gifts) |
 | `legacy` (DB) | Plain-string event from pre-structured DB rows, auto-wrapped on read |
+| `economic_boom` | Settlement reached two consecutive surplus decades and gained a tier |
+| `famine` | Settlement reached two consecutive deficit decades (no tier change) |
+| `banking_guild_founded` | Time Capsule: seeded gold compounded past threshold — Banking Guild formed, tier+1 |
+| `buried_gold_boom` | Time Capsule: buried gold trove discovered — Boom + Hyperinflation risk |
+| `economic_ruin` | Time Capsule: buried gold without Merchant/Magistrate caused settlement collapse |
+| `capsule_weapon` | Time Capsule: Tier 3+ weapon unearthed — settlement gains Militaristic trait |
+| `capsule_tome` | Time Capsule: Tier 3+ tome unearthed — settlement gains Scholarly trait and production bonus |
+| `trade_route_collapse` | A trade partner fell to Ruin; the link was severed |
+| `shortage` | Trade partner Ruin triggered a supply shortage (small dependent towns only) |
+| `settlement_ruined` | Settlement's tier dropped to 0; Ruin Hoard locked |
 
 **CausedBy links** — only populated when the causal event ID is in scope at write time:
 - `inheritance` → `causedBy` is the `id` of the deceased NPC's `death` event
@@ -238,6 +248,10 @@ Role → clothing tier mapping: Mayor/Scholar → noble; Guard → military; Cul
 | `tier` | number | Political tier of the controlling settlement (inherited by Districts) |
 | `population` | number | Number of living NPCs at this location |
 | `history` | string[] | Chronological event log |
+| `regionalWealth` | number | Accumulated wealth of the settlement (seeded at `tier × 500`, modified by economy simulation) |
+| `primaryExport` | string | Deterministic export good derived from biome (e.g. `"Iron"`, `"Grain"`, `"Spice"`) |
+| `tradePartners` | string[] | Coordinate keys of active trade partners (non-empty for Tier 3+ settlements; may shrink if partners become Ruins) |
+| `economicModifiers` | object | `{ shortage: bool, hyperinflation: bool, hyperinflationExpiryYear: number\|null, economicBoomYear: number\|null }` |
 
 ---
 
@@ -531,11 +545,21 @@ Attempt to assassinate the ruling Mayor of a Kingdom-tier settlement and seize t
 
 ### `POST /api/action/loot_tomb`
 
-Loot all items from a **dead** NPC.
+Loot a dead NPC's inventory, or plunder a Ruin tile for gold and artifacts.
 
-**Required fields:** `x`, `y`, `target` (must be a dead NPC), `playerState`
+**Required fields:** `x`, `y`, `playerState`  
+**Optional:** `target` — dead NPC ID (required when looting an NPC; omit when looting a Ruin tile)
 
-**Mechanics:** All items from NPC inventory moved to `playerState.inventory`; NPC inventory cleared; −5 reputation
+**Mechanics:**
+
+*Ruin tile (coordinate tier 0):*
+- Always yields `Math.floor(rng() * 10 + 1) × 100` gold added to `playerState.gold`
+- 10% chance to recover an artifact from the Ruin Hoard (if a `ruin_hoard` delta exists for this coordinate)
+- Returns `{ success: true, message: "..." }` — no reputation change
+
+*Dead NPC (coordinate tier > 0):*
+- `target` must be a dead NPC ID
+- All items from NPC inventory moved to `playerState.inventory`; NPC inventory cleared; −5 reputation
 
 ---
 

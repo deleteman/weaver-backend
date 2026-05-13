@@ -544,7 +544,7 @@ Delta Pass. Keep the shim until a confirmed DB migration clears all legacy rows.
 
 ---
 
-## 7. Validate (and fix) population growth when settlement tier rises  
+## ~~7. Validate (and fix) population growth when settlement tier rises~~ ✅ DONE
 **Difficulty**: Medium | **Impact**: Medium
 
 **What**: Confirm that when a settlement's tier increases (via history simulation or
@@ -570,6 +570,8 @@ Items 10–20 implement the mechanics described in `chrononaut-update.md`.
 Sorted by **impact ÷ difficulty** (highest ratio first). Items with shared schema
 dependencies are grouped so each can land independently without a later item needing
 a schema re-migration.
+
+**Mandatory** : After each feature is ready, you must update the PRD and design documents as well as API-implementation document to make sure the implementation is reflected in the documentation.
 
 ---
 

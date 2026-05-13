@@ -7,7 +7,8 @@ const { generateArtifact } = require('./items');
 const { determineBiome } = require('./biomes');
 const { replenishPopulationIfNeeded } = require('./population');
 const { PoliticalEngine } = require('./politics');
-const { saveDelta, getTierForCoordinate } = require('./db');
+const { saveDelta, getTierForCoordinate, upsertDelta } = require('./db');
+const { simulate_economy, lockRuinHoard } = require('./economy');
 const { getAdjacentTiles } = require('./map');
 const { makeEvent } = require('./event-utils');
 
@@ -68,6 +69,33 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
             townEntity.population = livingNpcs.length;
         }
 
+        // Run economy simulation every decade
+        if (townEntity && currentYear % 10 === 0) {
+            const econResult = simulate_economy(townEntity, 10, rng, coordinateKey, currentYear);
+
+            // Apply tier changes from economy
+            if (econResult.tierDelta !== 0) {
+                townEntity.political.tier = Math.max(0, townEntity.political.tier + econResult.tierDelta);
+                upsertDelta(coordinateKey, townEntity.identity.id, 'tier', String(townEntity.political.tier));
+            }
+
+            // Apply modifier changes
+            if (Object.keys(econResult.modifierChanges).length > 0) {
+                if (!townEntity.economicModifiers) {
+                    townEntity.economicModifiers = { shortage: false, hyperinflation: false, hyperinflationExpiryYear: null, economicBoomYear: null };
+                }
+                Object.assign(townEntity.economicModifiers, econResult.modifierChanges);
+                if (econResult.modifierChanges.tradePartners !== undefined) {
+                    townEntity.tradePartners = econResult.modifierChanges.tradePartners;
+                }
+            }
+
+            // Push economy events into town history
+            for (const event of econResult.events) {
+                pushEvent(townEntity, event);
+            }
+        }
+
         // Check for settlement promotion every decade
         if (townEntity && currentYear % 10 === 0) {
             // Create a settlement object for promotion check
@@ -117,6 +145,34 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                             pushEvent(townEntity, makeEvent(`[Year ${currentYear}] Expansion towards ${neighbor.key} was repelled by neighboring forces.`, 'settlement_promoted'));
                         }
                         break; // One conflict per promotion event
+                    }
+                }
+            }
+
+            // Check for tier demotion when population has decayed too far
+            if (townEntity) {
+                const settlementForDemotion = {
+                    tier: townEntity.political?.tier || 1,
+                    population: livingNpcs.length,
+                    name: townEntity.identity.name
+                };
+                if (PoliticalEngine.shouldDemote(settlementForDemotion)) {
+                    townEntity.political.tier -= 1;
+                    if (townEntity.political.tier === 0) {
+                        lockRuinHoard(coordinateKey, townEntity);
+                        pushEvent(townEntity, makeEvent(`[Year ${currentYear}] ${townEntity.identity.name} has fallen into ruin, its wealth sealed beneath the rubble.`, 'settlement_ruined'));
+                        log('history:settlement-ruined', { settlement: townEntity.identity.name, year: currentYear });
+                    } else {
+                        const tierNames = ['Town', 'SmallCity', 'FullCity', 'Magistrate', 'Kingdom'];
+                        const tierName = tierNames[townEntity.political.tier - 1] || 'Unknown';
+                        pushEvent(townEntity, makeEvent(`[Year ${currentYear}] ${townEntity.identity.name} has declined to a ${tierName}.`, 'settlement_demoted'));
+                        log('history:settlement-demoted', {
+                            settlement: townEntity.identity.name,
+                            newTier: townEntity.political.tier,
+                            tierName,
+                            population: livingNpcs.length,
+                            year: currentYear
+                        });
                     }
                 }
             }
