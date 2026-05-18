@@ -1,4 +1,4 @@
-const { deterministicHash, makeEvent } = require('./event-utils');
+const { deterministicHash, makeEvent, buildCausedBySnapshot } = require('./event-utils');
 
 describe('deterministicHash', () => {
     it('returns an 8-character hex string', () => {
@@ -51,9 +51,10 @@ describe('makeEvent', () => {
         expect(ev.causedBy).toBeNull();
     });
 
-    it('passes causedBy through when supplied', () => {
-        const ev = makeEvent('[Year 50] Inherited belongings.', 'inheritance', 'ev_abcd1234');
-        expect(ev.causedBy).toBe('ev_abcd1234');
+    it('passes causedBy snapshot through when supplied', () => {
+        const snapshot = { id: 'ev_abcd1234', year: 49, description: '[Year 49] Died.', type: 'death', actorName: 'John Doe' };
+        const ev = makeEvent('[Year 50] Inherited belongings.', 'inheritance', snapshot);
+        expect(ev.causedBy).toEqual(snapshot);
     });
 
     it('preserves the description field unchanged', () => {
@@ -65,5 +66,54 @@ describe('makeEvent', () => {
     it('sets the type field correctly', () => {
         const ev = makeEvent('[Year 10] Died of a tragic childhood fever.', 'child_death');
         expect(ev.type).toBe('child_death');
+    });
+});
+
+describe('buildCausedBySnapshot', () => {
+    const causingEvent = { id: 'ev_abc12345', year: 10, description: '[Year 10] died of a sudden fever.', type: 'death' };
+
+    it('returns null when causingEvent is null', () => {
+        expect(buildCausedBySnapshot(null, 'Alice')).toBeNull();
+    });
+
+    it('returns null when causingEvent is undefined', () => {
+        expect(buildCausedBySnapshot(undefined, 'Alice')).toBeNull();
+    });
+
+    it('returns null when causingEvent has no id', () => {
+        expect(buildCausedBySnapshot({ year: 10, description: 'x', type: 'death' }, 'Alice')).toBeNull();
+    });
+
+    it('returns a snapshot object with all 5 required fields', () => {
+        const result = buildCausedBySnapshot(causingEvent, 'Alice');
+        expect(result).toEqual({
+            id: 'ev_abc12345',
+            year: 10,
+            description: '[Year 10] died of a sudden fever.',
+            type: 'death',
+            actorName: 'Alice'
+        });
+    });
+
+    it('falls back actorName to "Unknown" when null', () => {
+        expect(buildCausedBySnapshot(causingEvent, null).actorName).toBe('Unknown');
+    });
+
+    it('falls back actorName to "Unknown" when undefined', () => {
+        expect(buildCausedBySnapshot(causingEvent, undefined).actorName).toBe('Unknown');
+    });
+
+    it('preserves all source event fields unchanged', () => {
+        const result = buildCausedBySnapshot(causingEvent, 'Bob');
+        expect(result.id).toBe(causingEvent.id);
+        expect(result.year).toBe(causingEvent.year);
+        expect(result.description).toBe(causingEvent.description);
+        expect(result.type).toBe(causingEvent.type);
+    });
+
+    it('is deterministic — same inputs return equivalent objects', () => {
+        const a = buildCausedBySnapshot(causingEvent, 'Alice');
+        const b = buildCausedBySnapshot(causingEvent, 'Alice');
+        expect(a).toEqual(b);
     });
 });

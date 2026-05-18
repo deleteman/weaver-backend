@@ -11,7 +11,8 @@ jest.mock('./db', () => ({
     getGlobalYear: jest.fn(() => 51),
     getSuzerainForCoordinate: jest.fn(() => null),
     getTierForCoordinate: jest.fn(() => 1),
-    getRuinHoard: jest.fn(() => null)
+    getRuinHoard: jest.fn(() => null),
+    appendJournalEntry: jest.fn()
 }));
 
 describe('Player Actions', () => {
@@ -311,10 +312,43 @@ describe('Player Actions', () => {
     test('banish should succeed if player is Mayor', () => {
         playerState.titles['Town'] = 'Mayor';
         const result = actions.banish(world, "world_X0_Y0", dummyTargetId, playerState);
-        
+
         // Either succeeds or fails based on world state, but should not throw
         expect(result).toHaveProperty('success');
         expect(result).toHaveProperty('message');
+    });
+
+    test('banish should save birthYear, arrivedYear, and ageAtArrival in the immigrant delta', () => {
+        const { saveDelta } = require('./db');
+        saveDelta.mockClear();
+
+        playerState.titles['Town'] = 'Mayor';
+
+        const banishId = 'banish-age-target';
+        world.add({
+            identity: Identity("Age Target", "NPC", banishId),
+            status: "Alive",
+            currentRole: "Citizen",
+            age: 30,
+            birthYear: 21,
+            description: "A test NPC.",
+            location: { x: 0, y: 0 },
+            inventory: { items: [] },
+            knowledge: { memories: {} },
+            quests: Quests(),
+            history: { events: [] }
+        });
+
+        actions.banish(world, "world_X0_Y0", banishId, playerState);
+
+        const immigrantCall = saveDelta.mock.calls.find(call => call[2] === 'immigrant_data');
+        expect(immigrantCall).toBeDefined();
+
+        const savedData = JSON.parse(immigrantCall[3]);
+        expect(savedData).toHaveProperty('ageAtArrival', 30);
+        expect(savedData).toHaveProperty('arrivedYear', 51); // getGlobalYear() mock returns 51
+        expect(savedData).toHaveProperty('birthYear', 21);
+        expect(savedData).not.toHaveProperty('age');
     });
 
     test('abdicate should fail if player is not Mayor', () => {
@@ -394,5 +428,304 @@ describe('Player Actions', () => {
         expect(ev).toHaveProperty('id');
         expect(ev).toHaveProperty('type');
         expect(ev).toHaveProperty('year');
+    });
+
+    // ─── executeTrade tests ────────────────────────────────────────────────────
+
+    test('executeTrade: buying > 80% of primaryExport stock writes a shortage delta', () => {
+        const { saveDelta } = require('./db');
+        saveDelta.mockClear();
+
+        const merchantId = 'merchant-uuid-001';
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.primaryExport = 'Grain';
+
+        world.add({
+            identity: Identity('Grain Merchant', 'NPC', merchantId),
+            status: 'Alive',
+            currentRole: 'Merchant',
+            merchantInventory: [
+                { itemId: 'slot-grain-0', name: 'Grain', tier: 1, quantity: 10, price: 50, type: 'resource' }
+            ],
+            personalWealth: 1000,
+            history: { events: [] },
+            knowledge: { memories: {} },
+            inventory: { items: [] },
+            quests: { offeredQuests: [] }
+        });
+
+        playerState.gold = 5000;
+        const result = actions.executeTrade(world, 'world_X0_Y0', merchantId, { type: 'buy', itemId: 'slot-grain-0', quantity: 9 }, playerState);
+
+        expect(result.success).toBe(true);
+        expect(result.event).not.toBeNull();
+        expect(result.event.type).toBe('MARKET_DEPLETION');
+        const shortageCall = saveDelta.mock.calls.find(c => c[2] === 'shortage' && c[3] === 'true');
+        expect(shortageCall).toBeDefined();
+    });
+
+    test('executeTrade: selling a Relic to Merchant with 13500 wealth triggers MERCHANT_ASCENDANCY', () => {
+        const { saveDelta } = require('./db');
+        saveDelta.mockClear();
+
+        const merchantId = 'merchant-uuid-002';
+
+        world.add({
+            identity: Identity('Relic Buyer', 'NPC', merchantId),
+            status: 'Alive',
+            currentRole: 'Merchant',
+            merchantInventory: [],
+            personalWealth: 13500,
+            history: { events: [] },
+            knowledge: { memories: {} },
+            inventory: { items: [] },
+            quests: { offeredQuests: [] }
+        });
+
+        playerState.gold = 0;
+        playerState.inventory = [{ id: 'relic-001', itemId: 'relic-001', name: 'The Ancient Blade', type: 'Weapon', prefix: 'Relic', value: 2000, price: 2000 }];
+
+        const result = actions.executeTrade(world, 'world_X0_Y0', merchantId, { type: 'sell', itemId: 'relic-001', quantity: 1 }, playerState);
+
+        expect(result.success).toBe(true);
+        expect(result.event).not.toBeNull();
+        expect(result.event.type).toBe('MERCHANT_ASCENDANCY');
+        // personalWealth: 13500 + 2000*5 = 23500 > 15000 → delta written
+        const plutocracyCall = saveDelta.mock.calls.find(c => c[2] === 'plutocracy_candidate' && c[3] === merchantId);
+        expect(plutocracyCall).toBeDefined();
+    });
+
+    test('executeTrade: Merchant with wealth 14000 selling a cheap Relic does NOT trigger Ascendancy', () => {
+        const { saveDelta } = require('./db');
+        saveDelta.mockClear();
+
+        const merchantId = 'merchant-uuid-003';
+
+        world.add({
+            identity: Identity('Small Dealer', 'NPC', merchantId),
+            status: 'Alive',
+            currentRole: 'Merchant',
+            merchantInventory: [],
+            personalWealth: 14000,
+            history: { events: [] },
+            knowledge: { memories: {} },
+            inventory: { items: [] },
+            quests: { offeredQuests: [] }
+        });
+
+        playerState.gold = 0;
+        // Relic value 100 → wealth becomes 14000 + 100*5 = 14500 < 15000
+        playerState.inventory = [{ id: 'relic-002', itemId: 'relic-002', name: 'The Cracked Crown', type: 'Relic', prefix: 'Relic', value: 100, price: 100 }];
+
+        const result = actions.executeTrade(world, 'world_X0_Y0', merchantId, { type: 'sell', itemId: 'relic-002', quantity: 1 }, playerState);
+
+        expect(result.success).toBe(true);
+        expect(result.event).toBeNull();
+        const plutocracyCall = saveDelta.mock.calls.find(c => c[2] === 'plutocracy_candidate');
+        expect(plutocracyCall).toBeUndefined();
+    });
+
+    test('executeTrade: buy that would leave player gold below 0 is rejected with status 400', () => {
+        const merchantId = 'merchant-uuid-004';
+
+        world.add({
+            identity: Identity('Expensive Dealer', 'NPC', merchantId),
+            status: 'Alive',
+            currentRole: 'Merchant',
+            merchantInventory: [
+                { itemId: 'expensive-item', name: 'Diamond', tier: 2, quantity: 5, price: 1000, type: 'resource' }
+            ],
+            personalWealth: 500,
+            history: { events: [] },
+            knowledge: { memories: {} },
+            inventory: { items: [] },
+            quests: { offeredQuests: [] }
+        });
+
+        playerState.gold = 100; // Not enough for 1000g item
+        const result = actions.executeTrade(world, 'world_X0_Y0', merchantId, { type: 'buy', itemId: 'expensive-item', quantity: 1 }, playerState);
+
+        expect(result.success).toBe(false);
+        expect(result.status).toBe(400);
+        expect(result.message).toMatch(/[Ii]nsufficient gold/);
+    });
+
+    // ─── reputationMap propagation tests ─────────────────────────────────────────
+
+    describe('reputationMap is populated by every reputation-modifying action', () => {
+        const COORDINATE = 'world_X0_Y0';
+
+        test('stealItem failure writes -20 (doubled penalty) to reputationMap', () => {
+            jest.spyOn(Math, 'random').mockReturnValue(0); // 0 < failChance(0.35) → caught
+            playerState.stats.stealth = 5; // failChance = 0.35
+            const result = actions.stealItem(world, COORDINATE, dummyTargetId, dummyItemId, playerState);
+            expect(result.success).toBe(false);
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap).toBeDefined();
+            expect(playerState.reputationMap[COORDINATE]).toBe(-20); // -10 * 2 (isFailed=true)
+        });
+
+        test('assassinate success on Mayor (rep >= 20) writes +50 to reputationMap', () => {
+            jest.spyOn(Math, 'random').mockReturnValue(0); // 0 < successChance → success
+            const mayorNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+            mayorNpc.currentRole = 'Mayor';
+            playerState.reputation = 25; // >= 20 → seizes power
+
+            actions.assassinate(world, COORDINATE, dummyTargetId, playerState);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(50);
+        });
+
+        test('assassinate success on Mayor (rep < 20) writes -40 to reputationMap', () => {
+            jest.spyOn(Math, 'random').mockReturnValue(0); // 0 < successChance → success
+            const mayorNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+            mayorNpc.currentRole = 'Mayor';
+            playerState.reputation = 10; // < 20 → chaos path
+
+            actions.assassinate(world, COORDINATE, dummyTargetId, playerState);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(-40);
+        });
+
+        test('assassinate failure writes -60 (doubled penalty) to reputationMap', () => {
+            jest.spyOn(Math, 'random').mockReturnValue(0.99); // 0.99 < successChance(0.40)? No → fail
+            playerState.stats.stealth = 0;
+            playerState.stats.strength = 0;
+
+            actions.assassinate(world, COORDINATE, dummyTargetId, playerState);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(-60); // -30 * 2 (isFailed=true)
+        });
+
+        test('turnInQuest (item delivery) writes +20 to reputationMap', () => {
+            const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+            questGiver.quests.offeredQuests = [];
+            playerState.inventory = [{ id: 'item-rep', name: 'Test Tome', type: 'Tome' }];
+
+            actions.turnInQuest(world, COORDINATE, dummyTargetId, 'item-rep', playerState);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(20);
+        });
+
+        test('turnInQuest (bounty report) writes +30 to reputationMap', () => {
+            const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+            const enemyId = 'bounty-enemy-rep-test';
+            questGiver.knowledge.memories[enemyId] = 'hates';
+            world.add({ identity: Identity('Dead Foe', 'NPC', enemyId), status: 'Dead' });
+
+            actions.turnInQuest(world, COORDINATE, dummyTargetId, playerState, undefined);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(30);
+        });
+
+        test('claimThrone writes +30 to reputationMap', () => {
+            playerState.reputation = 25;
+
+            actions.claimThrone(world, COORDINATE, playerState);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(30);
+        });
+
+        test('taxTown writes -(itemsStolen * 10) to reputationMap', () => {
+            playerState.titles['Town'] = 'Mayor';
+            playerState.inventory = [];
+            // beforeEach NPC has 1 item → itemsStolen = 1 → delta = -10
+
+            actions.taxTown(world, COORDINATE, playerState);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(-10);
+        });
+
+        test('banish writes -15 to reputationMap', () => {
+            playerState.titles['Town'] = 'Mayor';
+            const banishTargetId = 'banish-rep-target';
+            world.add({
+                identity: Identity('Banish Target', 'NPC', banishTargetId),
+                status: 'Alive',
+                currentRole: 'Citizen',
+                age: 28,
+                birthYear: 23,
+                description: 'A test citizen.',
+                inventory: { items: [] },
+                knowledge: { memories: {} },
+                quests: Quests(),
+                history: { events: [] }
+            });
+
+            actions.banish(world, COORDINATE, banishTargetId, playerState);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(-15);
+        });
+
+        test('abdicate (with successor) writes +25 to reputationMap', () => {
+            playerState.titles['Town'] = 'Mayor';
+            // beforeEach NPC is alive → qualifies as successor
+
+            actions.abdicate(world, COORDINATE, playerState);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(25);
+        });
+
+        test('lootTomb on dead NPC writes -5 to reputationMap', () => {
+            const deadNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+            deadNpc.status = 'Dead';
+
+            actions.lootTomb(world, COORDINATE, dummyTargetId, playerState);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(-5);
+        });
+
+        test('regicide failure writes -50 to reputationMap', () => {
+            jest.spyOn(Math, 'random').mockReturnValue(0.5); // 0.5 > failChance(0.85)? No → fail
+            const mayorNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+            mayorNpc.currentRole = 'Mayor';
+
+            actions.regicide(world, COORDINATE, dummyTargetId, 0, playerState);
+
+            expect(typeof playerState.reputation).toBe('number');
+            expect(playerState.reputationMap[COORDINATE]).toBe(-50);
+        });
+    });
+
+    // ─── minimal playerState guard — no NaN leaks ─────────────────────────────
+
+    describe('minimal playerState guard — no NaN leaks', () => {
+        const COORDINATE = 'world_X0_Y0';
+
+        test('assassinate with minimal playerState leaves reputation as a valid number', () => {
+            jest.spyOn(Math, 'random').mockReturnValue(0.99); // force fail to trigger rep change
+            const ps = { stats: { stealth: 0, strength: 0 } };
+            actions.assassinate(world, COORDINATE, dummyTargetId, ps);
+            expect(typeof ps.reputation).toBe('number');
+            expect(Number.isNaN(ps.reputation)).toBe(false);
+        });
+
+        test('lootTomb with minimal playerState leaves reputation as a valid number', () => {
+            const deadNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+            deadNpc.status = 'Dead';
+            const ps = { stats: { stealth: 5, strength: 5 } };
+            actions.lootTomb(world, COORDINATE, dummyTargetId, ps);
+            expect(typeof ps.reputation).toBe('number');
+            expect(Number.isNaN(ps.reputation)).toBe(false);
+        });
+
+        test('claimThrone with reputation: 0 does not corrupt reputation to an object', () => {
+            // Bug: !playerState.reputation was true when reputation=0, overwriting with {}
+            const ps = { stats: { stealth: 5, strength: 5 }, reputation: 0, titles: {} };
+            actions.claimThrone(world, COORDINATE, ps);
+            // claimThrone fails (rep < 20) but reputation must remain a number
+            expect(typeof ps.reputation).toBe('number');
+            expect(Number.isNaN(ps.reputation)).toBe(false);
+        });
     });
 });

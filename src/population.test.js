@@ -77,6 +77,19 @@ describe('Tier-aware population replenishment', () => {
         replenishPopulationIfNeeded(w2, 0, 0, seedrandom('det-seed'), t2, 'Plains', 20);
         expect(livingCount(w1, 0, 0)).toBe(livingCount(w2, 0, 0));
     });
+
+    test('replenishment-spawned NPCs have a valid sex field', () => {
+        const { world, town } = makeWorld(0, 0, 2, 4);
+        const before = Array.from(world.with('identity').where(e => e.identity.type === 'NPC')).map(n => n.identity.id);
+        replenishPopulationIfNeeded(world, 0, 0, seedrandom('sex-test'), town, 'Plains', 10);
+        const newNpcs = Array.from(world.with('identity').where(
+            e => e.identity.type === 'NPC' && !before.includes(e.identity.id)
+        ));
+        expect(newNpcs.length).toBeGreaterThan(0);
+        newNpcs.forEach(npc => {
+            expect(['male', 'female', 'other']).toContain(npc.sex);
+        });
+    });
 });
 
 describe('PoliticalEngine.shouldDemote()', () => {

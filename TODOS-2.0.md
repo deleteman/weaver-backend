@@ -9,7 +9,7 @@ a schema re-migration.
 
 ---
 
-## 20. Economics & The Long Wealth — Settlement Economy Simulation
+## ~~20. Economics & The Long Wealth — Settlement Economy Simulation~~ DONE
 **Difficulty**: High | **Impact**: Very High
 
 **What**: Settlements need a macro-economic model: production vs. consumption drives
@@ -106,7 +106,7 @@ if (rng() * 100 < discoveryChance) { /* trigger by item type */ }
 
 ---
 
-## 10. Relic Economy — Item Provenance & Age-Based Value Modifiers
+## ~~10. Relic Economy — Item Provenance & Age-Based Value Modifiers~~ DONE
 **Difficulty**: Low | **Impact**: High
 
 **What**: Every item needs a temporal identity so that age makes it valuable. Add three
@@ -155,7 +155,7 @@ if (age > 300) {
 
 ---
 
-## 16. Temporal Commerce — /api/trade Endpoint & Merchant Economy
+## ~~16. Temporal Commerce — /api/trade Endpoint & Merchant Economy~~ DONE
 **Difficulty**: Medium | **Impact**: High
 
 **What**: Give Merchant NPCs an inventory and personal wealth, and expose a `/api/trade`
@@ -229,7 +229,7 @@ settlement governance to `Plutocracy`, write history: `"The Era of the Merchant 
 
 ---
 
-## 11. The Traveler's Journal — Persistent Action Log with Entity Linking
+## ~~11. The Traveler's Journal — Persistent Action Log with Entity Linking~~ DONE
 **Difficulty**: Low | **Impact**: High
 
 **What**: Every action, visit, and interaction the Traveler makes must be recorded in a
@@ -468,6 +468,10 @@ if (mythos.temporalExposure < 20) {
 - `index.js` Delta Pass — load `mythos` delta and apply to town entity before Future Pass.
 - Merchant dialogue / price calculation in `src/dialogue.js` — multiply prices by
   `mythos.fearModifier` when `activeLegend === 'shadow'`.
+- **`src/actions.js` `executeTrade()`** — the buy-price already reads
+  `town?.mythos?.fearModifier ?? 1.0` and the sell-price divides by the same value.
+  These stubs are live but are no-ops (default 1.0) until `mythos` is populated here.
+  No further change is needed in `executeTrade()` once item 14 writes `mythos` as a delta.
 
 **Tests** (`src/history.test.js`):
 - Town with `temporalExposure: 51` and majority violent actions → `activeLegend: 'shadow'`.

@@ -66,6 +66,7 @@ Full 4-pass world load for a coordinate.
       "name":   "Kael the Brave",
       "age":    45,
       "role":   "Guard",
+      "sex":    "male",
       "status": "Alive",
       "dead":   false,
       "appearance": {
@@ -120,13 +121,37 @@ Full 4-pass world load for a coordinate.
 | `name` | string | NPC name |
 | `age` | number | Current age in years |
 | `role` | string | Current role (see role list above) |
+| `sex` | string | `"male"` \| `"female"` \| `"other"` — assigned deterministically at creation; `"other"` for legacy NPCs loaded from old deltas |
 | `status` | string | `"Alive"` \| `"Dead"` \| `"Exiled"` \| `"Migrated"` |
 | `dead` | boolean | Convenience alias for `status === "Dead"` — use to show death-state portrait without inspecting `status` |
 | `appearance` | object | Structured visual profile (see below) |
-| `inventory` | object[] | Items carried by this NPC |
+| `inventory` | object[] | Items carried by this NPC — see Artifact object fields below |
 | `quests` | object[] | Quests this NPC offers |
 | `history` | object[] | This NPC's personal event log — see History Event shape below |
 | `memories` | object | Map of `{ npcId: "hates" \| "avenged" }` |
+
+**Artifact object** — each entry in `inventory[]` has the following fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | 12-char deterministic MD5 hash of `coordinate + name + year + finderName` |
+| `name` | string | e.g. `"The Obsidian Blade"` |
+| `type` | string | `"Tome"` \| `"Jewelry"` \| `"Weapon"` \| `"Relic"` |
+| `description` | string | Flavour text |
+| `content` | string \| null | Populated only for Tomes; `null` for all other types |
+| `creationYear` | number | In-world year the artifact was generated |
+| `originSettlement` | string | Coordinate key of the tile where the artifact was created, e.g. `"world_X2_Y3"` |
+| `historicalSignificance` | string[] | Array of event tags appended over time, e.g. `["Unearthed in Year 312"]`; empty at creation |
+| `baseValue` | number | Deterministic base gold value, seeded by artifact type at generation |
+| `value` | number | Current effective value — equals `baseValue` at creation; apply `calculateItemValue(item, globalYear)` to get the age-adjusted figure |
+| `prefix` | string \| undefined | `"Ancient"` (age > 100 yr) or `"Relic"` (age > 300 yr); absent at creation — set by `calculateItemValue()` |
+
+**Age-based value formula** (applied by `calculateItemValue(item, globalYear)` in `src/items.js`):
+- Age > 300 yr → `prefix: 'Relic'`, `value = baseValue × 1.015^(age − 300)` (exponential growth)
+- Age 101–300 yr → `prefix: 'Ancient'`, `value = baseValue × 2`
+- Age ≤ 100 yr → no prefix, `value = baseValue`
+
+---
 
 **History Event object** — each entry in `history[]` and `town.history[]` is a structured object:
 
@@ -136,7 +161,7 @@ Full 4-pass world load for a coordinate.
 | `year` | number | In-world year when the event occurred |
 | `description` | string | Human-readable event text, e.g. `"[Year 12] Became a Guard."` |
 | `type` | string | Machine-readable event category (see table below) |
-| `causedBy` | string \| null | `id` of the event that caused this one, or `null` |
+| `causedBy` | object \| null | Inline snapshot of the event that caused this one, or `null` (see **CausedBy snapshot** below) |
 
 **Event type values:**
 
@@ -173,10 +198,20 @@ Full 4-pass world load for a coordinate.
 | `shortage` | Trade partner Ruin triggered a supply shortage (small dependent towns only) |
 | `settlement_ruined` | Settlement's tier dropped to 0; Ruin Hoard locked |
 
-**CausedBy links** — only populated when the causal event ID is in scope at write time:
-- `inheritance` → `causedBy` is the `id` of the deceased NPC's `death` event
-- `grief` → `causedBy` is the `id` of the deceased partner's `death` event
-- `power_seizure` (oust) → the ousted Mayor's entry has `causedBy` pointing to the new Mayor's seizure event
+**CausedBy snapshot** — when populated, `causedBy` is an object containing all the information needed to render the causal link without any additional lookups, even if the causing NPC has since migrated out of the chunk:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | `"ev_"` + 8-char hash — the ID of the causing event |
+| `year` | number | In-world year when the causing event occurred |
+| `description` | string | Full `"[Year N] ..."` text of the causing event |
+| `type` | string | Event type of the causing event |
+| `actorName` | string | Display name of the NPC who owns the causing event |
+
+Only populated for these event types, and only when the causal event exists at write time:
+- `inheritance` → causing event is the deceased NPC's `death` event; `actorName` is the deceased
+- `grief` → causing event is the partner's `death` event; `actorName` is the partner (`null` if partner migrated or has no death event)
+- `power_seizure` (oust) → causing event is the new Mayor's seizure; `actorName` is the new Mayor
 
 **`appearance` object fields:**
 
@@ -192,7 +227,7 @@ All values are discrete named strings drawn from fixed lists — use them to dri
 | `hair.color` | `black`, `dark brown`, `brown`, `auburn`, `chestnut`, `blond`, `platinum`, `red`; age-driven: `streaked grey` (45+), `grey` (60+), `white` (75+) |
 | `hair.length` | `cropped` (age < 16), `short`, `shoulder-length`, `long`; baldness-driven: `thinning` (40+), `bald` (55+) |
 | `hair.style` | `straight`, `wavy`, `curly`, `braided`, `tied back`, `shaved sides` |
-| `facialHair` | `none` (age < 16 or seeded), `stubble`, `goatee`, `thin mustache`, `short beard`, `full beard`, `braided beard` |
+| `facialHair` | `none` (age < 16, NPC `sex === 'female'`, or seeded), `stubble`, `goatee`, `thin mustache`, `short beard`, `full beard`, `braided beard` |
 | `clothing.head` | varies by role tier — `none`, `wool cap`, `leather hood`, `iron helm`, `wide-brim hat`, `crown`, `veil` |
 | `clothing.torso` | varies by role tier — `linen shirt`, `wool tunic`, `leather vest`, `padded gambeson`, `chainmail hauberk`, `plate breastplate`, `silk robe`, `merchant coat`, `tattered rags` |
 | `clothing.legs` | varies by role tier — `wool breeches`, `leather trousers`, `linen skirt`, `chainmail chausses`, `plate greaves`, `torn rags` |
@@ -282,6 +317,75 @@ Full chronological event log for a coordinate. Runs the full 4-pass pipeline.
 ```
 
 Each timeline entry is an object with `actor` (entity name), `text` (event text without the year prefix), `id` (event ID or `null` for legacy rows), `type`, and `causedBy`.
+
+---
+
+### `GET /api/journal`
+
+The Traveler's personal action log. Returns all journal entries matching the supplied filters, in ascending year order.
+
+**Query parameters (all optional):**
+
+| Param | Type | Description |
+|---|---|---|
+| `coordinate` | string | Filter to one settlement — e.g. `world_X2_Y3` |
+| `npcId` | string | Filter to all entries that reference a specific NPC |
+| `itemId` | string | Filter to all entries that involve a specific item |
+| `fromYear` | number | Lower bound (inclusive) on the entry year |
+| `toYear` | number | Upper bound (inclusive) on the entry year |
+| `limit` | number | Max entries returned (default 100, max 500) |
+
+**Response:**
+```json
+{
+  "entries": [
+    {
+      "id":             17,
+      "year":           142,
+      "action":         "assassinate",
+      "coordinate":     "world_X2_Y3",
+      "settlementName": "Ironkeep",
+      "npcId":          "npc_a1b2c3d4e5f6",
+      "npcName":        "Maren Ashford",
+      "itemId":         null,
+      "summary":        "Assassinated Maren Ashford (Guard) in Ironkeep",
+      "detail": { "settlementName": "Ironkeep", "npcName": "Maren Ashford", "xpGained": 75 }
+    }
+  ],
+  "total": 84
+}
+```
+
+`total` reflects the unfiltered count matching the query — it is unaffected by `limit`, so you can page through results.
+
+`settlementName` and `npcName` are surfaced from the `detail` JSON blob for convenience. The full `detail` object is also returned for action-specific structured fields (e.g. `xpGained`, `goldFound`, `qty`, `price`).
+
+**`action` values written by the engine:**
+
+| Value | Trigger |
+|---|---|
+| `visit` | `GET /api/chunk/:x/:y` — written after every successful chunk load |
+| `steal` | `POST /api/action/steal` (success only) |
+| `assassinate` | `POST /api/action/assassinate` (success only) |
+| `turnin` | `POST /api/action/turnin` — both item-delivery and bounty-report paths |
+| `trade` | `POST /api/trade` — both buy and sell |
+| `loot_tomb` | `POST /api/action/loot_tomb` — ruin path and dead-NPC path |
+| `claim` | `POST /api/action/claim` (success only) |
+| `tax` | `POST /api/action/tax` (success only) |
+| `decree` | `POST /api/action/decree` (success only) |
+| `banish` | `POST /api/action/banish` (success only) |
+| `abdicate` | `POST /api/action/abdicate` (both leaderless and successor paths) |
+| `regicide` | `POST /api/action/regicide` (success only) |
+| `advance_time` | `POST /api/action/advance_time` — written before simulation runs |
+| `gift` | `POST /api/gift` — reserved for item 17 (Artifact Seeding) |
+| `talk` | `POST /api/action/talk` — reserved for item 21 (Conversation Engine) |
+| `bury_capsule` | Time Capsule burial — reserved for a future item |
+
+**Error codes:**
+
+| Status | `code` | Reason |
+|---|---|---|
+| `500` | `JOURNAL_ERROR` | Unexpected server error during journal query |
 
 ---
 
@@ -585,6 +689,63 @@ Advance the global year counter and return the chunk reloaded at the new year.
   "chunkData": { "...same shape as GET /api/chunk..." }
 }
 ```
+
+---
+
+### `POST /api/trade`
+
+Buy from or sell to a Merchant NPC.
+
+**Request:**
+```json
+{
+  "x": 0,
+  "y": 0,
+  "npcId": "<merchant-npc-id>",
+  "playerState": { "gold": 500, "inventory": [] },
+  "transaction": {
+    "type": "buy",
+    "itemId": "<item-id>",
+    "quantity": 2
+  }
+}
+```
+
+`transaction.type` must be `"buy"` or `"sell"`.
+
+**Response (`200 OK`):**
+```json
+{
+  "playerState": { "gold": 300, "inventory": [...] },
+  "npcInventory": [
+    { "itemId": "...", "name": "Grain", "tier": 1, "quantity": 3, "price": 100, "type": "resource" }
+  ],
+  "event": null
+}
+```
+
+When a significant event is triggered, `event` is a non-null object:
+
+```json
+{
+  "type": "MARKET_DEPLETION",
+  "description": "The Grain market has been depleted. Expect shortages during the next time-skip."
+}
+```
+
+| `event.type` | Condition | Effect |
+|---|---|---|
+| `MARKET_DEPLETION` | Player purchases > 80% of Merchant's `primaryExport` stock | `shortage: true` delta written; next `advance_time` gives 60% chance of tier-drop or export pivot |
+| `MERCHANT_ASCENDANCY` | Player sells a Relic (age > 300yr) that pushes Merchant's `personalWealth` above 15 000g | `plutocracy_candidate` delta written; next `advance_time` installs the Merchant as ruler |
+
+**Error codes:**
+
+| Status | `code` | Reason |
+|---|---|---|
+| `400` | `INVALID_REQUEST` | Missing `npcId`, `playerState`, or `transaction` |
+| `400` | — | NPC is not a Merchant, item unavailable, or insufficient gold |
+| `404` | — | NPC not found in the chunk |
+| `500` | `TRADE_ERROR` | Unexpected server error |
 
 ---
 

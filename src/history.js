@@ -7,10 +7,25 @@ const { generateArtifact } = require('./items');
 const { determineBiome } = require('./biomes');
 const { replenishPopulationIfNeeded } = require('./population');
 const { PoliticalEngine } = require('./politics');
-const { saveDelta, getTierForCoordinate, upsertDelta } = require('./db');
+const { saveDelta, getTierForCoordinate, upsertDelta, getDeltas } = require('./db');
 const { simulate_economy, lockRuinHoard } = require('./economy');
 const { getAdjacentTiles } = require('./map');
-const { makeEvent } = require('./event-utils');
+const { makeEvent, buildCausedBySnapshot } = require('./event-utils');
+
+const SEX_MALE_THRESHOLD = 0.48;
+const SEX_FEMALE_THRESHOLD = 0.96;
+
+function determineSex(rng) {
+    const roll = rng();
+    return roll < SEX_MALE_THRESHOLD ? 'male' : roll < SEX_FEMALE_THRESHOLD ? 'female' : 'other';
+}
+
+function canReproduce(actorSex, partnerSex) {
+    const aSex = actorSex ?? 'other';
+    const pSex = partnerSex ?? 'other';
+    const sexes = new Set([aSex, pSex]);
+    return (sexes.has('male') && sexes.has('female')) || aSex === 'other' || pSex === 'other';
+}
 
 function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYear = 1) {
     log('simulateHistory:start', { targetX, targetY, totalYears, startYear });
@@ -19,10 +34,8 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
 
     const coordinateKey = `world_X${targetX}_Y${targetY}`;
 
-    // Persist a structured history event to the entity in memory and to the DB
     function pushEvent(entity, event) {
         entity.history.events.push(event);
-        saveDelta(coordinateKey, entity.identity.id, 'history_append', JSON.stringify(event));
     }
 
     // Initialize political and population components if not present
@@ -45,13 +58,16 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
         if (rng() < 0.15) {
             const name = generateText(rng, "#npcName#");
             const newId = crypto.createHash('md5').update(`world_X${targetX}_Y${targetY}_${name}_immigrant_${currentYear}`).digest('hex').substring(0, 12);
+            const immigrantAge = Math.floor(rng() * 20) + 18;
             const immigrant = world.add({
                 identity: Identity(name, "NPC", newId),
                 location: Location(targetX, targetY, townEntity),
                 description: generateText(rng, "#npcDesc#"),
                 status: "Alive",
                 currentRole: "Citizen",
-                age: Math.floor(rng() * 20) + 18,
+                age: immigrantAge,
+                birthYear: currentYear - immigrantAge,
+                sex: determineSex(rng),
                 history: { events: [] },
                 knowledge: Knowledge(),
                 inventory: Inventory(),
@@ -93,6 +109,19 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
             // Push economy events into town history
             for (const event of econResult.events) {
                 pushEvent(townEntity, event);
+            }
+
+            // Plutocracy takeover — check for a pending plutocracy_candidate delta from /api/trade
+            const allDeltas = getDeltas(coordinateKey);
+            const plutocracyDelta = allDeltas.find(d => d.state_key === 'plutocracy_candidate' && d.state_value !== 'resolved');
+            if (plutocracyDelta) {
+                const merchantId = plutocracyDelta.state_value;
+                townEntity.currentMayor = merchantId;
+                upsertDelta(coordinateKey, townEntity.identity.id, 'currentMayor', merchantId);
+                // Mark delta consumed so it doesn't fire again
+                upsertDelta(coordinateKey, townEntity.identity.id, 'plutocracy_candidate', 'resolved');
+                pushEvent(townEntity, makeEvent(`[Year ${currentYear}] The Era of the Merchant Kings.`, 'plutocracy'));
+                log('history:plutocracy-takeover', { coordinate: coordinateKey, merchantId, year: currentYear });
             }
         }
 
@@ -195,12 +224,12 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                 if (feeling === "loves") {
                     const partner = livingNpcs.find(n => n.identity.id === targetId);
                     if (!partner) {
-                        // Try to find the deceased partner's last death event for causedBy link
                         const partnerEntity = world.with('identity', 'history').where(e => e.identity.id === targetId).first;
                         const partnerEvents = partnerEntity?.history?.events ?? [];
                         const partnerLastEvent = partnerEvents[partnerEvents.length - 1];
-                        const partnerDeathId = (partnerLastEvent && partnerLastEvent.type === 'death') ? partnerLastEvent.id : null;
-                        pushEvent(actor, makeEvent(`[Year ${currentYear}] Was heartbroken by the loss of their love.`, 'grief', partnerDeathId));
+                        const causingDeathEvent = (partnerLastEvent && partnerLastEvent.type === 'death') ? partnerLastEvent : null;
+                        const partnerName = partnerEntity?.identity?.name ?? 'Unknown';
+                        pushEvent(actor, makeEvent(`[Year ${currentYear}] Was heartbroken by the loss of their love.`, 'grief', buildCausedBySnapshot(causingDeathEvent, partnerName)));
                         actor.knowledge.memories[targetId] = "mourns";
                     }
                 }
@@ -212,7 +241,7 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                 const partnerId = Object.keys(actor.knowledge.memories).find(k => actor.knowledge.memories[k] === "loves");
                 const partner = livingNpcs.find(n => n.identity.id === partnerId);
 
-                if (partner && actor.identity.id < partner.identity.id) {
+                if (partner && actor.identity.id < partner.identity.id && canReproduce(actor.sex, partner.sex)) {
                     const lastName = actor.identity.name.split(' ')[1];
                     const childName = `${generateText(rng, "#firstName#")} ${lastName}`;
                     const childId = crypto.createHash('md5').update(`world_X${targetX}_Y${targetY}_${childName}_born_${currentYear}`).digest('hex').substring(0, 12);
@@ -223,6 +252,8 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                         status: "Alive",
                         currentRole: "Child",
                         age: 0,
+                        birthYear: currentYear,
+                        sex: determineSex(rng),
                         history: { events: [] },
                         knowledge: Knowledge(),
                         inventory: Inventory(),
@@ -265,7 +296,7 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
 
                     if (heirs.length > 0) {
                         heirs[0].inventory.items.push(...actor.inventory.items);
-                        pushEvent(heirs[0], makeEvent(`[Year ${currentYear}] Inherited belongings from the late ${actor.identity.name}.`, 'inheritance', deathEvent.id));
+                        pushEvent(heirs[0], makeEvent(`[Year ${currentYear}] Inherited belongings from the late ${actor.identity.name}.`, 'inheritance', buildCausedBySnapshot(deathEvent, actor.identity.name)));
                         actor.inventory.items = [];
                     }
                 }
@@ -286,7 +317,7 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                     const currentMayor = livingNpcs.find(n => n.currentRole === "Mayor" && n !== actor);
                     if (currentMayor) {
                         currentMayor.currentRole = "Citizen";
-                        pushEvent(currentMayor, makeEvent(`[Year ${currentYear}] Was ousted from the Mayor's office by ${actor.identity.name}.`, 'power_seizure', seizureEvent.id));
+                        pushEvent(currentMayor, makeEvent(`[Year ${currentYear}] Was ousted from the Mayor's office by ${actor.identity.name}.`, 'power_seizure', buildCausedBySnapshot(seizureEvent, actor.identity.name)));
                     }
                     townEntity.currentMayor = actor.identity.name;
                 } else {
@@ -336,7 +367,9 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                     const immigrantData = {
                         name: migrant.identity.name,
                         description: migrant.description,
-                        age: migrant.age,
+                        ageAtArrival: currentYear - (migrant.birthYear ?? (currentYear - migrant.age)),
+                        arrivedYear: currentYear,
+                        birthYear: migrant.birthYear ?? (currentYear - migrant.age),
                         inventory: migrant.inventory.items,
                         memories: migrant.knowledge.memories
                     };

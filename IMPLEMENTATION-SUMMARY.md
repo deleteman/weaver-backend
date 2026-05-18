@@ -25,6 +25,8 @@ Project Weaver is a fully functional Just-In-Time (JIT) Procedural RPG Engine ca
 - ✅ **NPC Appearance System**: Fully structured, deterministic appearance objects per NPC — eye colour, skin tone, biome-weighted skin distribution, age-driven hair/build/height progression, role-tiered clothing, and rare marks (scars, tattoos, birthmarks)
 - ✅ **Tile Description System**: Every chunk response includes a `tileDescription` object with discrete fields for size, atmosphere, walls, streets, surroundings, landmark, and role-derived buildings. Map tiles include a lighter `tileDescription` (terrain, vegetation, settlementSilhouette) computed without ECS instantiation.
 - ✅ **Settlement Economy Simulation**: Per-decade production/consumption loop with Economic Boom and Famine events; Time Capsule discovery and trigger system (Banking Guild, Hyperinflation, Scholarly/Militaristic traits); Macro trade routes with Ruin partner severance and Shortage modifiers; Ruin Hoard locking and recovery via `loot_tomb`.
+- ✅ **Temporal Commerce** (`POST /api/trade`): Merchant NPCs carry deterministic inventories (4–8 `primaryExport` resource slots + 1–2 artifacts) and `personalWealth` (500–3000g) seeded at NPC generation. Buying > 80% of a Merchant's `primaryExport` stock triggers Market Depletion (`shortage` delta). Selling a Relic (age > 300yr) to a Merchant whose wealth exceeds 15 000g triggers Merchant Ascendancy (`plutocracy_candidate` delta → Plutocracy takeover on next `advance_time`). Price stubs read `town.mythos?.fearModifier ?? 1.0`, ready for item 14.
+- ✅ **Traveler's Journal** (`GET /api/journal`): Every player action and chunk visit is appended to a dedicated `journal` SQLite table with NPC, item, and coordinate linking. Filterable by coordinate, npcId, itemId, year range, and limit. Response surfaces `settlementName` and `npcName` at the top level; structured `detail` blobs carry action-specific data (xpGained, goldFound, qty, price). Journal entries are written for all 14 action types plus chunk visits and time-skips.
 
 ---
 
@@ -85,7 +87,8 @@ class ArtifactEffects {
 ```
 
 **Notes**:
-- Existing `src/items.js` already generates artifacts
+- `src/items.js` `generateArtifact(rng, coordinate, year, finderName)` generates artifacts with full provenance: `creationYear`, `originSettlement`, `historicalSignificance[]`, `baseValue` (type-keyed deterministic range), and `value` (equals `baseValue` at creation)
+- `calculateItemValue(item, globalYear)` (also in `src/items.js`) applies age-based modifiers: `>100yr → prefix:'Ancient', value×2`; `>300yr → prefix:'Relic', value×1.015^(age−300)`
 - Artifact effects ready to apply on NPC item acquisition
 - Combat bonus calculations for conflict resolution
 
@@ -269,6 +272,7 @@ simulate_economy(town, years, rng, coordinate, globalYear)
 - `GET /api/coordinate?x=X&y=Y` - Alternative query syntax
 - `GET /api/map/:x/:y/:radius` - Fog of war mini-map (each tile includes `claimedBy` / `claimedByName` / `districtType` for territory grouping; `null` for sovereign tiles)
 - `GET /api/chunk/:x/:y/chronicle` - Town history timeline
+- `GET /api/journal` - Traveler's persistent action log with optional filters (`coordinate`, `npcId`, `itemId`, `fromYear`, `toYear`, `limit`)
 
 ### Action Endpoints
 - `POST /api/action/steal` - Steal item from NPC
@@ -313,6 +317,7 @@ generator/
 │   ├── population.js                 # Population system
 │   ├── quests.js                     # Quest generation
 │   ├── economy.js                    # Settlement economy simulation (Item 20)
+│   ├── journal.test.js               # DB-level journal tests (in-memory SQLite)
 │   └── [test files]                  # Comprehensive test suite
 ```
 
@@ -431,9 +436,9 @@ The implementation is production-ready, fully tested, and extensible for future 
 
 ---
 
-**Last Updated**: May 13, 2026  
+**Last Updated**: May 18, 2026  
 **Implementation Time**: Complete  
-**Test Status**: 320/320 passing ✅  
+**Test Status**: 374/374 passing ✅  
 **Build Status**: ✅ Ready to deploy
 
 ---

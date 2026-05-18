@@ -5,6 +5,9 @@ const { assignRoleByBiome } = require('./biomes');
 const { log } = require('./logger');
 const crypto = require('crypto');
 
+const SEX_MALE_THRESHOLD = 0.48;
+const SEX_FEMALE_THRESHOLD = 0.96;
+
 /**
  * Check if population needs replenishment (decade check)
  * If population < 5, trigger refugee crisis or baby boom
@@ -24,6 +27,9 @@ function replenishPopulationIfNeeded(world, x, y, rng, townEntity, biome, curren
             const newId = crypto.createHash('md5').update(`${currentCoordinate}_${name}_replenish_${currentYear}`).digest('hex').substring(0, 12);
             const role = assignRoleByBiome(rng, biome);
             
+            const initialAge = Math.floor(rng() * 15) + 16;
+            const sexRoll = rng();
+            const sex = sexRoll < SEX_MALE_THRESHOLD ? 'male' : sexRoll < SEX_FEMALE_THRESHOLD ? 'female' : 'other';
             const newNpc = world.add({
                 identity: Identity(name, "NPC", newId),
                 location: Location(x, y, townEntity),
@@ -31,7 +37,9 @@ function replenishPopulationIfNeeded(world, x, y, rng, townEntity, biome, curren
                 status: "Alive",
                 currentRole: role,
                 biome,
-                age: Math.floor(rng() * 15) + 16,
+                age: initialAge,
+                birthYear: currentYear - initialAge,
+                sex,
                 history: { events: [`[Year ${currentYear}] Arrived as a refugee seeking shelter.`] },
                 knowledge: Knowledge(),
                 inventory: Inventory(),

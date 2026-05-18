@@ -1,5 +1,5 @@
 // src/actions.js
-const { saveDelta, getDeltas, getGlobalYear, getSuzerainForCoordinate, getTierForCoordinate, getRuinHoard } = require('./db');
+const { saveDelta, getDeltas, getGlobalYear, getSuzerainForCoordinate, getTierForCoordinate, getRuinHoard, appendJournalEntry } = require('./db');
 const { generateArtifact } = require('./items');
 const { log } = require('./logger');
 const { makeEvent } = require('./event-utils');
@@ -16,7 +16,15 @@ function actionLog(event, details = {}) {
 function ensurePlayerState(playerState) {
     if (!playerState) playerState = {};
     if (!playerState.stats) playerState.stats = {};
+    if (playerState.stats.stealth === undefined) playerState.stats.stealth = 5;
+    if (playerState.stats.strength === undefined) playerState.stats.strength = 5;
     if (!playerState.titles) playerState.titles = {};
+    if (typeof playerState.reputation !== 'number') playerState.reputation = 0;
+    if (!playerState.reputationMap) playerState.reputationMap = {};
+    if (!Array.isArray(playerState.inventory)) playerState.inventory = [];
+    if (typeof playerState.xp !== 'number') playerState.xp = 0;
+    if (typeof playerState.level !== 'number') playerState.level = 1;
+    if (typeof playerState.gold !== 'number') playerState.gold = 0;
     return playerState;
 }
 
@@ -73,6 +81,11 @@ function processXP(playerState, amount) {
 
 function getCurrentYear(coordinateString) {
     return getGlobalYear();
+}
+
+function getSettlementName(world) {
+    const town = world.with('identity').where(e => e.identity.type === 'Town' || e.identity.type === 'District').first;
+    return town?.identity?.name ?? 'Unknown Settlement';
 }
 
 function applyReputationWithPropagation(playerState, coordinate, baseAmount, isFailed = false) {
@@ -141,6 +154,16 @@ function stealItem(world, coordinate, targetId, itemId, playerState) {
     if (playerState.titles["Global"] === "Master Thief") msg += ` Your prolific stealing has earned you the title of Master Thief!`;
     if (leveled) msg += ` YOU LEVELED UP TO LEVEL ${playerState.level}!`;
 
+    const settlementName = getSettlementName(world);
+    appendJournalEntry({
+        year: getCurrentYear(coordinate),
+        action: 'steal',
+        coordinate,
+        npcId: targetNPC.identity.id,
+        itemId: stolenItem.id,
+        summary: `Stole ${targetItem.name} from ${targetNPC.identity.name} (${targetNPC.currentRole ?? 'Citizen'}) in ${settlementName}`,
+        detail: { settlementName, npcName: targetNPC.identity.name, itemName: targetItem.name, xpGained: 25 }
+    });
     actionLog('stealItem:success', { targetId, itemId, newInventoryCount: playerState.inventory.length });
     return { success: true, message: msg };
 }
@@ -193,6 +216,15 @@ function assassinate(world, coordinate, targetId, playerState) {
         }
 
         if (leveled) msg += ` (+75 XP) YOU LEVELED UP TO LEVEL ${playerState.level}!`;
+        const settlementName = town?.identity?.name ?? coordinate;
+        appendJournalEntry({
+            year: currentYear,
+            action: 'assassinate',
+            coordinate,
+            npcId: targetNPC.identity.id,
+            summary: `Assassinated ${targetNPC.identity.name} (${targetNPC.currentRole ?? 'Citizen'}) in ${settlementName}`,
+            detail: { settlementName, npcName: targetNPC.identity.name, xpGained: 75 }
+        });
         return { success: true, message: msg };
     } else {
         applyReputationWithPropagation(playerState, coordinate, -30, true);
@@ -202,14 +234,15 @@ function assassinate(world, coordinate, targetId, playerState) {
 
 function turnInQuest(world, coordinate, targetId, itemId, playerState) {
     actionLog('turnInQuest:start', { coordinate, targetId, itemId });
-    playerState = ensurePlayerState(playerState);
 
-    // FIX 1: Detect router argument shifting for Bounties!
-    // If playerState is undefined, it means itemId contains the playerState object.
-    if (!playerState || !playerState.inventory) {
+    // Detect router argument shifting for Bounties: when no itemId is given, the
+    // router passes playerState in the itemId slot and leaves playerState undefined.
+    if (playerState === undefined || playerState === null) {
         playerState = itemId;
         itemId = null;
     }
+
+    playerState = ensurePlayerState(playerState);
 
     const questGiver = findEntity(world, targetId, ['identity', 'inventory', 'status', 'currentRole', 'knowledge']);
     const currentYear = getGlobalYear(); // Ensure you use getGlobalYear() here!
@@ -263,7 +296,17 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
             const leveled = processXP(playerState, 50);
             let msg = `🤝 You gave ${donatedItem.name} to ${questGiver.identity.name}. (+50 XP)`;
             if (leveled) msg += ` YOU LEVELED UP TO LEVEL ${playerState.level}!`;
-            
+
+            const settlementNameFetch = getSettlementName(world);
+            appendJournalEntry({
+                year: currentYear,
+                action: 'turnin',
+                coordinate,
+                npcId: questGiver.identity.id,
+                itemId: donatedItem.id,
+                summary: `Completed quest '${donatedItem.name}' — delivered artifact to ${questGiver.identity.name} in ${settlementNameFetch}`,
+                detail: { settlementName: settlementNameFetch, npcName: questGiver.identity.name, itemName: donatedItem.name, xpGained: 50 }
+            });
             return { success: true, message: msg };
         }
         
@@ -299,6 +342,15 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
             if (playerState.titles["Global"] === "Master Assassin") msg += ` Your lethal efficiency has earned you the title of Master Assassin!`;
             if (leveled) msg += ` YOU LEVELED UP TO LEVEL ${playerState.level}!`;
 
+            const settlementNameBounty = getSettlementName(world);
+            appendJournalEntry({
+                year: currentYear,
+                action: 'turnin',
+                coordinate,
+                npcId: questGiver.identity.id,
+                summary: `Completed bounty on ${avengedTargetName} — reported to ${questGiver.identity.name} in ${settlementNameBounty}`,
+                detail: { settlementName: settlementNameBounty, npcName: questGiver.identity.name, avengedName: avengedTargetName, xpGained: 100 }
+            });
             return { success: true, message: msg };
         }
         return { success: false, message: `You have no completed bounties to report to this person.` };
@@ -335,6 +387,13 @@ function claimThrone(world, coordinate, playerState) {
     playerState.titles[town.identity.name] = "Mayor";
     applyReputationWithPropagation(playerState, coordinate, 30);
 
+    appendJournalEntry({
+        year: currentYear,
+        action: 'claim',
+        coordinate,
+        summary: `Claimed the throne of ${town.identity.name}`,
+        detail: { settlementName: town.identity.name }
+    });
     actionLog('claimThrone:success', { town: town.identity.name });
     return { success: true, message: `👑 You have stepped up to lead! You are now the Mayor of ${town.identity.name}!` };
 }
@@ -371,6 +430,14 @@ function taxTown(world, coordinate, playerState) {
     }
 
     applyReputationWithPropagation(playerState, coordinate, -(itemsStolen * 10));
+    const taxSettlementName = getSettlementName(world);
+    appendJournalEntry({
+        year: getCurrentYear(coordinate),
+        action: 'tax',
+        coordinate,
+        summary: `Taxed ${taxSettlementName} — confiscated ${itemsStolen} items`,
+        detail: { settlementName: taxSettlementName, itemsStolen }
+    });
     actionLog('taxTown:complete', { itemsStolen, reputation: playerState.reputation });
     return { success: true, message: `💰 You abused your power and taxed ${itemsStolen} items from the town. The people despise you.` };
 }
@@ -393,6 +460,16 @@ function decree(world, coordinate, targetId, newRole, playerState) {
     targetNPC.currentRole = newRole;
     saveDelta(coordinate, targetNPC.identity.id, "currentRole", newRole);
     appendHistory(coordinate, targetNPC, makeEvent(`[Year ${currentYear}] Was officially decreed a ${newRole} by the Mayor.`, 'career_shift'));
+
+    const decreeSettlementName = getSettlementName(world);
+    appendJournalEntry({
+        year: currentYear,
+        action: 'decree',
+        coordinate,
+        npcId: targetNPC.identity.id,
+        summary: `Decreed ${targetNPC.identity.name} to role ${newRole} in ${decreeSettlementName}`,
+        detail: { settlementName: decreeSettlementName, npcName: targetNPC.identity.name, newRole }
+    });
     actionLog('decree:success', { targetId, newRole });
 
     return { success: true, message: `📜 You have decreed ${targetNPC.identity.name} to be a ${newRole}.` };
@@ -426,13 +503,25 @@ function banish(world, coordinate, targetId, playerState) {
     const immigrantData = {
         name: targetNPC.identity.name,
         description: targetNPC.description,
-        age: targetNPC.age,
+        ageAtArrival: targetNPC.age,
+        arrivedYear: currentYear,
+        birthYear: targetNPC.birthYear ?? (currentYear - targetNPC.age),
         inventory: targetNPC.inventory.items,
         memories: targetNPC.knowledge.memories
     };
 
     saveDelta(destCoordinate, targetNPC.identity.id, "immigrant_data", JSON.stringify(immigrantData));
     applyReputationWithPropagation(playerState, coordinate, -15);
+
+    const banishSettlementName = getSettlementName(world);
+    appendJournalEntry({
+        year: currentYear,
+        action: 'banish',
+        coordinate,
+        npcId: targetNPC.identity.id,
+        summary: `Banished ${targetNPC.identity.name} from ${banishSettlementName}`,
+        detail: { settlementName: banishSettlementName, npcName: targetNPC.identity.name, destination: destCoordinate }
+    });
     actionLog('banish:success', { targetId, destination: destCoordinate });
 
     return { success: true, message: `🛑 You banished ${targetNPC.identity.name}. They were last seen wandering towards coordinates X:${destX}, Y:${destY} swearing revenge against you.` };
@@ -453,18 +542,34 @@ function abdicate(world, coordinate, playerState) {
 
     delete playerState.titles[town.identity.name];
     
+    const abdicateSettlementName = town?.identity?.name ?? coordinate;
     if (nextMayor) {
         nextMayor.currentRole = "Mayor";
         saveDelta(coordinate, nextMayor.identity.id, "currentRole", "Mayor");
         saveDelta(coordinate, town.identity.name, "currentMayor", nextMayor.identity.name);
         appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] The traveler abdicated, and the people elected ${nextMayor.identity.name} as the new Mayor.`, 'power_seizure'));
-        
+
         applyReputationWithPropagation(playerState, coordinate, 25);
+        appendJournalEntry({
+            year: currentYear,
+            action: 'abdicate',
+            coordinate,
+            npcId: nextMayor.identity.id,
+            summary: `Abdicated throne of ${abdicateSettlementName} to ${nextMayor.identity.name}`,
+            detail: { settlementName: abdicateSettlementName, npcName: nextMayor.identity.name }
+        });
         actionLog('abdicate:success', { nextMayorId: nextMayor.identity.id });
         return { success: true, message: `🕊️ You peacefully stepped down. ${nextMayor.identity.name} is the new Mayor.` };
     } else {
         saveDelta(coordinate, town.identity.name, "currentMayor", "NPC");
         appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] The traveler abdicated, leaving the town leaderless.`, 'power_seizure'));
+        appendJournalEntry({
+            year: currentYear,
+            action: 'abdicate',
+            coordinate,
+            summary: `Abdicated throne of ${abdicateSettlementName} — town left leaderless`,
+            detail: { settlementName: abdicateSettlementName }
+        });
         actionLog('abdicate:leaderless');
         return { success: true, message: `🕊️ You stepped down. With no one to replace you, the town is leaderless.` };
     }
@@ -493,6 +598,14 @@ function lootTomb(world, coordinate, targetId, playerState) {
             playerState.inventory.push(lootedItem);
         }
 
+        appendJournalEntry({
+            year: currentYear,
+            action: 'loot_tomb',
+            coordinate,
+            itemId: lootedItem?.id ?? null,
+            summary: `Looted ruin at ${coordinate} — found ${goldFound}g${lootedItem ? ` and ${lootedItem.name}` : ''}`,
+            detail: { goldFound, itemName: lootedItem?.name ?? null }
+        });
         actionLog('lootTomb:ruin-hoard', { coordinate, goldFound, itemFound: lootedItem?.name || null });
         const itemPart = lootedItem ? ` and ${lootedItem.name}` : '';
         return { success: true, message: `You looted the ruin and found ${goldFound}g${itemPart}.` };
@@ -515,6 +628,14 @@ function lootTomb(world, coordinate, targetId, playerState) {
     persistInventory(coordinate, targetNPC);
 
     applyReputationWithPropagation(playerState, coordinate, -5);
+    appendJournalEntry({
+        year: getCurrentYear(coordinate),
+        action: 'loot_tomb',
+        coordinate,
+        npcId: targetNPC.identity.id,
+        summary: `Looted ${targetNPC.identity.name} — took ${lootedItems.length} item(s)`,
+        detail: { settlementName: getSettlementName(world), npcName: targetNPC.identity.name, itemCount: lootedItems.length }
+    });
     actionLog('lootTomb:success', { targetId, lootedCount: lootedItems.length });
     return { success: true, message: `🦇 You looted the tomb of ${targetNPC.identity.name} and found: ${lootedItems.map(i => i.name).join(", ")}. (-5 Reputation)` };
 }
@@ -553,6 +674,15 @@ function regicide(world, coordinate, targetId, weaponTier, playerState) {
         const leveled = awardXP(playerState, 5000);
         let msg = `⚔️ Regicide! You have slain ${targetNPC.identity.name} and seized the throne!`;
         if (leveled) msg += ` (+5000 XP) YOU LEVELED UP TO LEVEL ${playerState.level}!`;
+        const regicideSettlementName = town?.identity?.name ?? coordinate;
+        appendJournalEntry({
+            year: currentYear,
+            action: 'regicide',
+            coordinate,
+            npcId: targetNPC.identity.id,
+            summary: `Slew ${targetNPC.identity.name} (${targetNPC.currentRole ?? 'Mayor'}) in ${regicideSettlementName}`,
+            detail: { settlementName: regicideSettlementName, npcName: targetNPC.identity.name, xpGained: 5000 }
+        });
         return { success: true, message: msg };
     } else {
         applyReputationWithPropagation(playerState, coordinate, -50);
@@ -560,4 +690,122 @@ function regicide(world, coordinate, targetId, weaponTier, playerState) {
     }
 }
 
-module.exports = { stealItem, assassinate, claimThrone, turnInQuest, taxTown, decree, banish, abdicate, lootTomb, regicide };
+/**
+ * Executes a buy or sell transaction between the player and a Merchant NPC.
+ * Market Depletion fires when > 80% of the primaryExport stock is purchased.
+ * Merchant Ascendancy fires when selling a Relic pushes the Merchant's personalWealth > 15000.
+ */
+function executeTrade(world, coordinate, npcId, transaction, playerState) {
+    actionLog('executeTrade:start', { coordinate, npcId, transaction });
+    playerState = ensurePlayerState(playerState);
+
+    const npc = findEntity(world, npcId, ['identity', 'currentRole']);
+    if (!npc) return { success: false, message: 'NPC not found.', status: 404 };
+    if (npc.currentRole !== 'Merchant') return { success: false, message: 'NPC is not a Merchant.', status: 400 };
+
+    const town = world.with('identity').where(e => e.identity.type === 'Town' || e.identity.type === 'District').first;
+    const { type, itemId, quantity } = transaction;
+    let event = null;
+    let tradeJournalEntry = null;
+
+    if (type === 'buy') {
+        const slot = (npc.merchantInventory || []).find(i => i.itemId === itemId);
+        if (!slot || slot.quantity < quantity) {
+            return { success: false, message: 'Item unavailable or insufficient stock.', status: 400 };
+        }
+
+        // stub hook: multiply by town.mythos?.fearModifier ?? 1.0 once item 14 lands
+        const fearModifier = town?.mythos?.fearModifier ?? 1.0;
+        const totalCost = Math.floor(slot.price * quantity * fearModifier);
+        if ((playerState.gold || 0) < totalCost) {
+            return { success: false, message: 'Insufficient gold.', status: 400 };
+        }
+
+        playerState.gold = (playerState.gold || 0) - totalCost;
+        slot.quantity -= quantity;
+
+        playerState.inventory = playerState.inventory || [];
+        for (let i = 0; i < quantity; i++) {
+            playerState.inventory.push({ ...slot, quantity: 1 });
+        }
+
+        // Market Depletion check — track against primaryExport slots before this purchase
+        if (town && town.primaryExport) {
+            const exportSlots = npc.merchantInventory.filter(s => s.name === town.primaryExport);
+            const remaining = exportSlots.reduce((sum, s) => sum + s.quantity, 0);
+            const total = exportSlots.reduce((sum, s) => sum + s.quantity + (s.itemId === itemId ? quantity : 0), 0);
+            if (total > 0 && remaining / total <= 0.20) {
+                saveDelta(coordinate, town.identity.id, 'shortage', 'true');
+                event = {
+                    type: 'MARKET_DEPLETION',
+                    description: `The ${town.primaryExport} market has been depleted. Expect shortages during the next time-skip.`
+                };
+                actionLog('executeTrade:market-depletion', { coordinate, primaryExport: town.primaryExport });
+            }
+        }
+
+        const tradeSettlementName = town?.identity?.name ?? coordinate;
+        tradeJournalEntry = {
+            year: getCurrentYear(coordinate),
+            action: 'trade',
+            coordinate,
+            npcId: npc.identity.id,
+            itemId: slot.itemId,
+            summary: `Bought ${quantity}× ${slot.name} from ${npc.identity.name} in ${tradeSettlementName}`,
+            detail: { settlementName: tradeSettlementName, npcName: npc.identity.name, qty: quantity, price: totalCost }
+        };
+
+    } else if (type === 'sell') {
+        const playerSlot = (playerState.inventory || []).find(i => (i.itemId || i.id) === itemId);
+        if (!playerSlot) return { success: false, message: 'Item not in player inventory.', status: 400 };
+
+        // stub hook: divide by fearModifier once item 14 lands
+        const fearModifier = town?.mythos?.fearModifier ?? 1.0;
+        const salePrice = Math.floor((playerSlot.price || playerSlot.value || 100) * 0.8 / fearModifier);
+        playerState.gold = (playerState.gold || 0) + salePrice;
+        playerState.inventory = (playerState.inventory || []).filter(i => (i.itemId || i.id) !== itemId);
+
+        // Merchant Ascendancy — selling a Relic
+        if (playerSlot.prefix === 'Relic' && town) {
+            npc.personalWealth = (npc.personalWealth || 0) + (playerSlot.value || 0) * 5;
+            if (npc.personalWealth > 15000) {
+                saveDelta(coordinate, town.identity.id, 'plutocracy_candidate', npc.identity.id);
+                event = {
+                    type: 'MERCHANT_ASCENDANCY',
+                    description: `${npc.identity.name}'s wealth has grown immense. Their influence may reshape this settlement's governance.`
+                };
+                actionLog('executeTrade:merchant-ascendancy', { coordinate, npcId: npc.identity.id, wealth: npc.personalWealth });
+            }
+        }
+
+        const sellSettlementName = town?.identity?.name ?? coordinate;
+        tradeJournalEntry = {
+            year: getCurrentYear(coordinate),
+            action: 'trade',
+            coordinate,
+            npcId: npc.identity.id,
+            itemId: playerSlot.itemId || playerSlot.id || null,
+            summary: `Sold ${playerSlot.name ?? 'item'} to ${npc.identity.name} in ${sellSettlementName} for ${salePrice}g`,
+            detail: { settlementName: sellSettlementName, npcName: npc.identity.name, price: salePrice }
+        };
+
+    } else {
+        return { success: false, message: 'Invalid transaction type. Must be "buy" or "sell".', status: 400 };
+    }
+
+    // Persist updated merchant state
+    saveDelta(coordinate, npc.identity.id, 'merchantInventory', JSON.stringify(npc.merchantInventory || []));
+    saveDelta(coordinate, npc.identity.id, 'personalWealth', String(npc.personalWealth || 0));
+
+    if (tradeJournalEntry) appendJournalEntry(tradeJournalEntry);
+
+    actionLog('executeTrade:complete', { coordinate, npcId, type, event: event?.type || null });
+    return {
+        success: true,
+        npcInventory: npc.merchantInventory || [],
+        event,
+        message: type === 'buy' ? `Purchased from ${npc.identity.name}.` : `Sold to ${npc.identity.name}.`
+    };
+}
+
+module.exports = { stealItem, assassinate, claimThrone, turnInQuest, taxTown, decree, banish, abdicate, lootTomb, regicide, executeTrade };

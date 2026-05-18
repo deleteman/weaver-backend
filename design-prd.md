@@ -1,6 +1,6 @@
 # Project Weaver: Engine Architecture & PRD
 
-**Version:** 4.0 (Settlement Economy Simulation)
+**Version:** 4.1 (Temporal Commerce)
 **Product Type:** Just-In-Time Procedural RPG Engine (Backend API)
 
 ## 1. Executive Summary
@@ -45,11 +45,13 @@ The engine utilizes `miniplex`. Every actor, town, and child is an entity compos
 | `Location` | `tiles` (array), `parent_id` | Array of X/Y pairs supporting multi-tile cities. | 
 | `History` | `events` (array of event objects) | Chronological logs. Each event: `{ id, year, description, type, causedBy }`. `id` is `"ev_"` + 8-char SHA-1 hash of description. `type` is a machine-readable slug (e.g. `"death"`, `"power_seizure"`). `causedBy` links to the `id` of a causal event or `null`. Old plain-string deltas are auto-wrapped as `type: "legacy"` on read. | 
 | `Knowledge` | `memories` (dict) | Maps NPC UUIDs to statuses (`loves`, `hates`, `avenged`). | 
-| `Inventory` | `items` (array of objects) | Rich Artifact objects with their own UUIDs and lore. | 
+| `Inventory` | `items` (array of objects) | Rich Artifact objects with their own UUIDs and lore. Each item carries: `id`, `name`, `type` (`Tome`/`Jewelry`/`Weapon`/`Relic`), `description`, `content` (Tomes only), `creationYear`, `originSettlement` (coordinate key), `historicalSignificance` (string array), `baseValue` (deterministic gold value seeded by type), and `value` (age-adjusted; use `calculateItemValue(item, globalYear)` from `src/items.js` to compute). `prefix` (`'Ancient'` or `'Relic'`) is added by `calculateItemValue` for items older than 100 or 300 years respectively. | 
 | `Status` | `state` (enum) | `Alive`, `Dead`, `Migrated`, `Exiled`. | 
 | `Political` | `tier` (int), `demographics` | Tracks settlement size (1-5) and dominant traits (e.g., "Scholar Heavy"). | 
 | `Diplomacy` | `allies`, `colonies`, `suzerain` | Arrays of Coordinate keys mapping macro-level relationships. | 
 | `Economy` (Town fields) | `regionalWealth`, `primaryExport`, `tradePartners`, `economicModifiers` | Settlement-level economic state. `regionalWealth` seeded at `tier × 500`. `primaryExport` is one good from `BIOME_PRIMARY_EXPORT`, deterministic per coordinate. `tradePartners` is an array of coordinate keys (seeded for Tier 3+ towns). `economicModifiers` tracks `{ shortage, hyperinflation, hyperinflationExpiryYear, economicBoomYear }`. | 
+| `Merchant` (NPC fields, Merchant role only) | `personalWealth`, `merchantInventory` | Merchant-specific economic state seeded at NPC generation. `personalWealth`: integer in range 500–3000, seeded from the chunk RNG. `merchantInventory`: array of trade slots `{ itemId, name, tier, quantity, price, type }` — 4–8 slots of the settlement's `primaryExport` resource plus 1–2 random artifacts (generated via `generateMerchantInventory()` from `src/items.js`). Both fields are persisted as deltas and re-applied on load. | 
+| `sex` (NPC field) | `'male'` \| `'female'` \| `'other'` | Assigned deterministically at creation via the seeded RNG (thresholds: < 0.48 → `'male'`, < 0.96 → `'female'`, else → `'other'`). Legacy NPCs loaded from old deltas without a `sex` field default to `'other'`. Only heterosexual (`male` + `female`) couples, or any couple where either partner is `'other'`, can produce children during simulation. Same-sex couples can still form via the romance system. |
 
 ## 4. NPC Lifecycle & Micro-Simulations
 
@@ -151,7 +153,7 @@ Splitting into independent sub-seeds means extending one group in a future versi
 | `hair.length` | → `cropped` for age < 16 |
 | `baldness` | Seeded boolean (~30%). If true: `thinning` at 40, `bald` at 55 |
 | `build` | → `slight` for age < 16, `frail` for age > 70 |
-| `facialHair` | → `none` for age < 16 |
+| `facialHair` | → `none` for age < 16 or NPC `sex === 'female'` |
 | `height` | → `very short` for age < 10, `short` for age 10–15, seeded adult value (average/tall) from 16 onward |
 
 **Role → clothing tier mapping:**
@@ -247,6 +249,52 @@ Each time `simulate_economy()` runs, every trade partner is checked via `getTier
 When a settlement's tier drops to 0 during `simulateHistory()`, `lockRuinHoard()` is called:
 - Locks `Math.floor(regionalWealth × 0.5)` into a `ruin_hoard` delta for the coordinate.
 - The `/api/action/loot_tomb` action checks for this hoard: always yields randomised gold; 10% chance of a recovered artifact if a hoard row exists.
+
+### 6.5. Temporal Commerce & Merchant Economy
+
+The `POST /api/trade` endpoint allows the Traveler to buy from or sell to any living Merchant NPC in a loaded chunk. Unlike the `/api/action/*` family, this endpoint returns `{ playerState, npcInventory, event }` — not `chunkData` — since only the Merchant's state and the player's wallet change.
+
+#### Merchant Inventory Generation
+
+At NPC generation time (`generateNPCs()` in `index.js`), Merchant-role NPCs receive two extra fields seeded from the chunk RNG:
+
+- `personalWealth` — integer in `[500, 3000]`
+- `merchantInventory` — produced by `generateMerchantInventory(rng, primaryExport, globalYear, coordinate)` in `src/items.js`:
+  - **4–8 resource slots**: `{ itemId, name: primaryExport, tier: 1, quantity: 1–5, price: 50–200g, type: 'resource' }`
+  - **1–2 artifact slots**: a `generateArtifact()` result run through `calculateItemValue()`, marked up 20% for sale price
+
+Both fields are persisted as deltas after every trade and re-applied from the Delta Pass on subsequent chunk loads.
+
+#### Trade Transaction Rules
+
+| Field | Constraint |
+|---|---|
+| `transaction.type` | `"buy"` or `"sell"` |
+| `transaction.itemId` | Must exist in Merchant inventory (buy) or player inventory (sell) |
+| `transaction.quantity` | Must not exceed the slot's available `quantity` (buy only) |
+| Player gold | Must be ≥ `slot.price × quantity` (buy); gold is never driven negative |
+
+**Buy price:** `Math.floor(slot.price × quantity × fearModifier)` — `fearModifier` defaults to `1.0` and will be driven by `town.mythos.fearModifier` once item 14 (Folklore & Mythos) is implemented.
+
+**Sell price:** `Math.floor((item.price || item.value) × 0.8 / fearModifier)` — 80% of face value, divided by `fearModifier` (Shadow legend reduces payouts).
+
+#### Market Depletion
+
+After a buy transaction, the engine checks whether the player has purchased > 80% of the Merchant's `primaryExport` stock (across all export slots for that commodity). If so:
+
+1. `saveDelta(coordinate, town.identity.id, 'shortage', 'true')` is written.
+2. The response carries `event: { type: 'MARKET_DEPLETION', description: '...' }`.
+3. On the next `advance_time`, `simulate_economy()` reads the `shortage` modifier and gives the settlement a 60% chance to drop 1 tier or pivot `primaryExport`.
+
+#### Merchant Ascendancy
+
+After a sell transaction, if the sold item has `prefix === 'Relic'` (age > 300yr):
+
+1. `npc.personalWealth += item.value × 5`.
+2. If `personalWealth > 15 000`:
+   - `saveDelta(coordinate, town.identity.id, 'plutocracy_candidate', npc.identity.id)` is written.
+   - The response carries `event: { type: 'MERCHANT_ASCENDANCY', description: '...' }`.
+   - On the next `advance_time`, `simulateHistory()` checks for this delta each simulated decade and, when found, installs the Merchant as ruler (`currentMayor` overwritten), marks the delta `resolved`, and appends the history event `"The Era of the Merchant Kings."`.
 
 ## 7. Player Agency & Progression Mechanics
 

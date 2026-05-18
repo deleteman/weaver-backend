@@ -20,6 +20,22 @@ db.exec(`
   )
 `);
 
+db.exec(`
+  CREATE TABLE IF NOT EXISTS journal (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    year       INTEGER NOT NULL,
+    action     TEXT NOT NULL,
+    coordinate TEXT NOT NULL,
+    npc_id     TEXT,
+    item_id    TEXT,
+    summary    TEXT NOT NULL,
+    detail     TEXT
+  );
+  CREATE INDEX IF NOT EXISTS journal_coordinate ON journal(coordinate);
+  CREATE INDEX IF NOT EXISTS journal_npc_id     ON journal(npc_id);
+  CREATE INDEX IF NOT EXISTS journal_year       ON journal(year);
+`);
+
 // Function to save a player's action
 function saveDelta(coordinate, entityName, stateKey, stateValue) {
     const stmt = db.prepare('INSERT INTO deltas (coordinate, entity_name, state_key, state_value) VALUES (?, ?, ?, ?)');
@@ -94,5 +110,37 @@ function getRuinHoard(coordinate) {
     return stmt.get(coordinate) || null;
 }
 
-module.exports = { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, getSuzerainForCoordinate, getCapsuleDeltas, getRuinHoard };
+const JOURNAL_DEFAULT_LIMIT = 100;
+
+function appendJournalEntry({ year, action, coordinate, npcId = null, itemId = null, summary, detail = null }) {
+    const stmt = db.prepare(
+        'INSERT INTO journal (year, action, coordinate, npc_id, item_id, summary, detail) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    );
+    const detailJson = detail !== null ? JSON.stringify(detail) : null;
+    stmt.run(year, action, coordinate, npcId, itemId, summary, detailJson);
+    log('appendJournalEntry', { year, action, coordinate });
+}
+
+function getJournal({ coordinate, npcId, itemId, fromYear, toYear, limit = JOURNAL_DEFAULT_LIMIT } = {}) {
+    const conditions = [];
+    const params = [];
+    if (coordinate !== undefined) { conditions.push('coordinate = ?'); params.push(coordinate); }
+    if (npcId      !== undefined) { conditions.push('npc_id = ?');     params.push(npcId); }
+    if (itemId     !== undefined) { conditions.push('item_id = ?');     params.push(itemId); }
+    if (fromYear   !== undefined) { conditions.push('year >= ?');       params.push(fromYear); }
+    if (toYear     !== undefined) { conditions.push('year <= ?');       params.push(toYear); }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+    const total = db.prepare(`SELECT COUNT(*) AS total FROM journal ${where}`).get(...params).total;
+    const rows   = db.prepare(`SELECT * FROM journal ${where} ORDER BY year ASC LIMIT ?`).all(...params, limit);
+    const entries = rows.map(r => ({
+        ...r,
+        npcId:  r.npc_id,
+        itemId: r.item_id,
+        detail: r.detail ? JSON.parse(r.detail) : null,
+    }));
+    log('getJournal', { total, returned: entries.length });
+    return { entries, total };
+}
+
+module.exports = { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, getSuzerainForCoordinate, getCapsuleDeltas, getRuinHoard, appendJournalEntry, getJournal };
 

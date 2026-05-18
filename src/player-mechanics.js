@@ -142,7 +142,10 @@ class PlayerMechanics {
         if (playerState.stats.strength === undefined) playerState.stats.strength = 5;
         if (!playerState.level) playerState.level = 1;
         if (!playerState.xp) playerState.xp = 0;
-        if (!playerState.reputation) playerState.reputation = {};
+        if (typeof playerState.reputation !== 'number') playerState.reputation = 0;
+        if (!playerState.reputationMap) playerState.reputationMap = {};
+        if (!Array.isArray(playerState.inventory)) playerState.inventory = [];
+        if (typeof playerState.gold !== 'number') playerState.gold = 0;
         if (!playerState.titles) playerState.titles = {};
         return playerState;
     }

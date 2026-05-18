@@ -144,9 +144,10 @@ function rollRare(rng, typeKey, locationList, valueList, singleChance = 0.15, do
  * @param {string} role    — NPC role (drives clothing tier)
  * @param {string} biome   — biome type (drives skin tone distribution)
  * @param {string} status  — NPC status ('Alive' | 'Dead')
+ * @param {string} [sex]   — NPC sex ('male' | 'female' | 'other'); affects facial hair and build
  * @returns {object}
  */
-function generateAppearance(npcId, age, role, biome, status) {
+function generateAppearance(npcId, age, role, biome, status, sex = 'other') {
     const baseRng  = seedrandom(npcId + '_appearance');
     const clothRng = seedrandom(npcId + '_clothing');
     const markRng  = seedrandom(npcId + '_marks');
@@ -188,7 +189,8 @@ function generateAppearance(npcId, age, role, biome, status) {
     if (age > 70)      build = 'frail';
     else if (age < 16) build = 'slight';
 
-    const facialHair = age < 16 ? 'none' : baseFacialHair;
+    const canHaveFacialHair = sex === 'male' || sex === 'other';
+    const facialHair = (age < 16 || !canHaveFacialHair) ? 'none' : baseFacialHair;
 
     let height = baseAdultHeight;
     if (age < 10)      height = 'very short';

@@ -192,6 +192,7 @@ npm test -- --coverage
 | Change existing response field names | Breaks client compatibility |
 | Add new npm dependencies without noting them here | Increases bundle risk |
 | Generate UUIDs with `crypto.randomUUID()` in simulation code | Must be deterministic hashes |
+| Use "magic numbers" | All key numeric constants must be assigned to a mnemotechnic constant for better understanding and tweaking|
 | Modify `design-prd.md` or `API-REFERENCE.md` without asking | These are sources of truth — when a feature is added, changed, or removed, ask the user for explicit approval before updating them |
 
 

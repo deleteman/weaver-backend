@@ -7,6 +7,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- `journal` SQLite table with indexes on `coordinate`, `npc_id`, and `year` for efficient filtering; created idempotently at DB init in `src/db.js`.
+- `appendJournalEntry({ year, action, coordinate, npcId, itemId, summary, detail })` in `src/db.js`: appends a structured narrative entry to the journal table; `detail` is serialized to JSON.
+- `getJournal({ coordinate, npcId, itemId, fromYear, toYear, limit })` in `src/db.js`: returns filtered journal entries in ascending year order plus an accurate `total` count (unaffected by `limit`).
+- `GET /api/journal` endpoint: returns journal entries with optional filters (`coordinate`, `npcId`, `itemId`, `fromYear`, `toYear`, `limit`). Response includes `settlementName` and `npcName` surfaced from the `detail` JSON blob.
+- Visit logging: every successful `GET /api/chunk/:x/:y` request now appends a `visit` journal entry recording the settlement name and current year.
+- `advance_time` logging: `POST /api/action/advance_time` now appends a journal entry recording the year range skipped.
+- Journal entries written on success for all 14 action handlers in `src/actions.js`: `steal`, `assassinate`, `turnin` (fetch and bounty), `trade` (buy and sell), `loot_tomb` (ruin and dead-NPC paths), `claim`, `tax`, `decree`, `banish`, `abdicate`, and `regicide`.
+- `getSettlementName(world)` internal helper in `src/actions.js`: DRY ECS scan for the loaded Town/District entity name, reused across action handlers.
+- 7 new tests in `src/journal.test.js` covering journal insert/retrieve, coordinate/npcId/year-range filtering, limit, sort order, and total-vs-returned-count correctness, using a real in-memory SQLite database.
+
+### Fixed
+- `ensurePlayerState()` in `src/actions.js` now initializes all required `playerState` fields (`reputation`, `reputationMap`, `inventory`, `xp`, `level`, `gold`, and stat defaults) so arithmetic like `reputation += delta` can never silently produce `NaN` when a client sends an incomplete state object.
+- `PlayerMechanics.ensurePlayerState()` in `src/player-mechanics.js` was initializing `reputation` as `{}` instead of `0`; the guard `!playerState.reputation` evaluated to `true` when reputation was `0`, overwriting the scalar with an empty object and corrupting subsequent arithmetic.
+- Argument-shifting guard in `turnInQuest()` now fires before `ensurePlayerState()` instead of after it, restoring the bounty-report path where the router passes `playerState` in the `itemId` slot.
+- NPC ages are now simulation-independent: every NPC stores a `birthYear` at creation time, and the serialized `age` is always computed as `globalYear - birthYear`. Previously, ages were accumulated via `actor.age++` and capped at `MAX_FUTURE_YEARS` (year 550), causing NPCs created at year 550 to appear perpetually young (e.g. Brynn Greymantle, age 18 in year 1924).
+- Delta-injected immigrants (via `/api/action/banish` and simulation-internal migration) now save `birthYear`, `arrivedYear`, and `ageAtArrival` in the stored delta. On injection, `effectiveAge = globalYear - birthYear` is calculated; NPCs whose effective age exceeds `MAX_NATURAL_LIFESPAN` (80) are silently skipped — they died of old age.
+- `causedBy` on `grief`, `inheritance`, and `power_seizure` (oust) events now stores an inline snapshot object `{ id, year, description, type, actorName }` instead of a bare event ID string. This eliminates dangling references when the causing NPC has migrated out of the chunk — the frontend can render the full causal chain without any additional lookups.
+- NPC history arrays growing exponentially on each chunk visit: `pushEvent()` in `history.js` was writing every simulation event to the DB via `saveDelta`, then the Delta Pass in `injectImmigrantsAndApplyDeltas` re-applied all those rows to the already-populated in-memory entities. The fix removes the `saveDelta` call from `pushEvent` — simulation events are deterministic from the seed and must not be persisted; only player-caused mutations written by `actions.js` belong in the DB.
+
+### Added
+- NPCs now have a `sex` field (`'male'`, `'female'`, or `'other'`), assigned deterministically via the seeded RNG at creation time across all creation paths: base generation (`generateNPCs`), immigration, population replenishment, and childbirth.
+- Childbirth is now restricted to couples where at least one partner is `'male'` and the other is `'female'` (or either is `'other'`). Same-sex couples can still form via the romance system but will not produce children.
+- `generateAppearance()` in `src/appearance.js` accepts an optional `sex` parameter: `'female'` NPCs no longer generate facial hair; `'male'` and `'other'` NPCs can. The `sex` field is also included in the NPC serialization returned by `/api/chunk/:x/:y`.
+- `POST /api/trade` endpoint for buying from and selling to Merchant NPCs; non-standard response shape (`playerState`, `npcInventory`, `event`) distinct from the `/api/action/*` family.
+- Merchant NPCs now carry deterministic `merchantInventory` (4–8 `primaryExport` resource slots plus 1–2 random artifacts with 20% markup) and `personalWealth` (500–3000g), both seeded at NPC generation time in `generateNPCs()` and re-applied from deltas on subsequent chunk loads.
+- Market Depletion: when the player buys > 80% of a Merchant's `primaryExport` stock, `executeTrade()` writes a `shortage: true` delta; `simulate_economy()` will give the settlement a 60% chance of tier-drop or export pivot on the next time-skip.
+- Merchant Ascendancy: selling a Relic (item with `prefix === 'Relic'`, i.e. age > 300yr) to a Merchant whose `personalWealth` exceeds 15 000g writes a `plutocracy_candidate` delta; `simulateHistory()` detects this delta during the next `advance_time` and installs the Merchant as ruler, recording "The Era of the Merchant Kings."
+- `generateMerchantInventory(rng, primaryExport, globalYear, coordinate)` exported from `src/items.js` — deterministic Merchant stock generation using seeded RNG.
+- Price stubs in `executeTrade()` read `town?.mythos?.fearModifier ?? 1.0` as a no-op placeholder, ready to become active when item 14 (Folklore & Mythos) is implemented.
+- `generateArtifact()` in `src/items.js` now includes three provenance fields on every item: `creationYear`, `originSettlement`, and `historicalSignificance` (initially `[]`), plus deterministic `baseValue` and `value` fields keyed by artifact type.
+- `calculateItemValue(item, globalYear)` exported from `src/items.js`: applies age-based value modifiers — items older than 100 years gain the `'Ancient'` prefix and 2× value; items older than 300 years gain the `'Relic'` prefix and exponential growth (`baseValue × 1.015^(age-300)`).
+
+
 - `src/event-utils.js`: new module exporting `deterministicHash(input)` (SHA-1, 8-char hex) and `makeEvent(description, type, causedBy)` — the shared factory for all structured history events.
 - History events are now structured objects `{ id, year, description, type, causedBy }` instead of plain strings. All 20 event push sites in `src/history.js` and all 13 sites in `src/actions.js` produce structured events.
 - Causal links wired: `inheritance` events carry `causedBy` pointing to the preceding `death` event ID; `grief` events point to the deceased partner's death event; `power_seizure` (oust) events point to the new Mayor's seizure event.

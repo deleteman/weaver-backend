@@ -48,7 +48,76 @@ function generateArtifact(rng, coordinate, year, finderName) {
         description = `A bizarre artifact from a bygone era. Just looking at it ${pick(rng, effects)}.`;
     }
 
-    return { id, name, type, description, content };
+    const baseValueRanges = { Tome: [150, 600], Jewelry: [200, 700], Weapon: [100, 500], Relic: [250, 800] };
+    const [min, max] = baseValueRanges[type];
+    const baseValue = Math.floor(rng() * (max - min + 1)) + min;
+
+    return {
+        id, name, type, description, content,
+        creationYear: year,
+        originSettlement: coordinate,
+        historicalSignificance: [],
+        baseValue,
+        value: baseValue
+    };
 }
 
-module.exports = { generateArtifact };
+function calculateItemValue(item, globalYear) {
+    const age = globalYear - item.creationYear;
+    const result = { ...item };
+    if (age > 300) {
+        result.prefix = 'Relic';
+        result.value = item.baseValue * Math.pow(1.015, age - 300);
+    } else if (age > 100) {
+        result.prefix = 'Ancient';
+        result.value = item.baseValue * 2;
+    }
+    return result;
+}
+
+/**
+ * Generates a deterministic trade inventory for a Merchant NPC.
+ * 4–8 units of the settlement's primaryExport resource plus 1–2 random artifacts.
+ * @param {Function} rng - Seeded RNG
+ * @param {string} primaryExport - Settlement's primary export commodity
+ * @param {number} globalYear - Current world year (used for artifact age)
+ * @param {string} coordinate - Tile coordinate key
+ * @returns {Array<{itemId, name, tier, quantity, price, type}>}
+ */
+function generateMerchantInventory(rng, primaryExport, globalYear, coordinate) {
+    const items = [];
+    const itemCount = Math.floor(rng() * 5) + 4; // 4–8 export slots
+
+    for (let i = 0; i < itemCount; i++) {
+        const basePrice = Math.floor(rng() * 151) + 50; // 50–200g
+        items.push({
+            itemId: `trade_${coordinate}_${primaryExport}_${i}`,
+            name: primaryExport,
+            tier: 1,
+            quantity: Math.floor(rng() * 5) + 1, // 1–5 units
+            price: basePrice,
+            type: 'resource'
+        });
+    }
+
+    // 1–2 random artifacts
+    const extraCount = Math.floor(rng() * 2) + 1;
+    for (let i = 0; i < extraCount; i++) {
+        const artifact = generateArtifact(rng, coordinate, globalYear, `merchant_${i}`);
+        const valued = calculateItemValue(artifact, globalYear);
+        items.push({
+            itemId: valued.id,
+            name: valued.name,
+            tier: 1,
+            quantity: 1,
+            price: Math.floor(valued.value * 1.2), // 20% markup
+            type: valued.type,
+            creationYear: valued.creationYear,
+            prefix: valued.prefix
+        });
+    }
+
+    return items;
+}
+
+module.exports = { generateArtifact, calculateItemValue, generateMerchantInventory };

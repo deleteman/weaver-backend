@@ -6,7 +6,7 @@ const seedrandom = require('seedrandom');
 const { Identity, Location, History, Knowledge, Inventory, Quests, Status, Political, Diplomacy } = require('./src/components');
 const { PoliticalEngine } = require('./src/politics'); 
 const { generateText } = require('./src/grammar');
-const { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate } = require('./src/db');
+const { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, appendJournalEntry, getJournal } = require('./src/db');
 const { simulateHistory } = require('./src/history');
 const { generateQuests } = require('./src/quests');
 const actions = require('./src/actions'); 
@@ -20,8 +20,12 @@ const { log } = require('./src/logger');
 const { generateAppearance } = require('./src/appearance');
 const { generateTileDescription } = require('./src/tile-description');
 const { deterministicHash } = require('./src/event-utils');
+const { generateMerchantInventory } = require('./src/items');
 
 const MAX_FUTURE_YEARS = 500;
+const MAX_NATURAL_LIFESPAN = 80;
+const SEX_MALE_THRESHOLD = 0.48;
+const SEX_FEMALE_THRESHOLD = 0.96;
 
 const app = express();
 app.use(cors());
@@ -72,20 +76,31 @@ function generateNPCs(world, x, y, rng, populationSize, townEntity) {
         const age = Math.floor(rng() * 27) + 18;
         const npcId = crypto.createHash('md5').update(`${currentCoordinate}_${name}_base_${i}`).digest('hex').substring(0, 12);
         const role = assignRoleByBiome(rng, biome);
-        
-        world.add({
+        const sexRoll = rng();
+        const sex = sexRoll < SEX_MALE_THRESHOLD ? 'male' : sexRoll < SEX_FEMALE_THRESHOLD ? 'female' : 'other';
+
+        const npcEntity = {
             identity: Identity(name, "NPC", npcId),
-            location: Location(x, y, townEntity), 
+            location: Location(x, y, townEntity),
             description: generateText(rng, "#npcDesc#"),
             age,
+            birthYear: 1 - age,
             currentRole: role,
             biome,
+            sex,
             status: "Alive",
             inventory: { items: [] },
             quests: { offeredQuests: [] },
             history: { events: [] },
             knowledge: { memories: {} }
-        });
+        };
+
+        if (role === 'Merchant' && townEntity) {
+            npcEntity.personalWealth = Math.floor(rng() * 2501) + 500;
+            npcEntity.merchantInventory = generateMerchantInventory(rng, townEntity.primaryExport || 'Grain', getGlobalYear(), currentCoordinate);
+        }
+
+        world.add(npcEntity);
     }
     log(`Generated ${populationSize} NPCs at (${x}, ${y}) with biome ${biome}`);
 }
@@ -95,22 +110,35 @@ function injectImmigrantsAndApplyDeltas(world, x, y, townEntity, currentCoordina
     log(`Injecting immigrants and applying ${savedChanges.length} deltas at (${x}, ${y})`);
 
     // Inject Immigrants
+    const currentGlobalYear = getGlobalYear();
     const immigrants = savedChanges.filter(c => c.state_key === "immigrant_data");
     for (const imm of immigrants) {
         const data = JSON.parse(imm.state_value);
+
+        // Reconstruct birthYear — support old deltas that only stored `age`
+        const birthYear = data.birthYear
+            ?? ((data.arrivedYear ?? currentGlobalYear) - (data.ageAtArrival ?? data.age));
+        const effectiveAge = currentGlobalYear - birthYear;
+
+        if (effectiveAge > MAX_NATURAL_LIFESPAN) {
+            log(`Skipped immigrant ${data.name}: died of old age (age ${effectiveAge})`);
+            continue;
+        }
+
         world.add({
-            identity: Identity(data.name, "NPC", imm.entity_name), 
+            identity: Identity(data.name, "NPC", imm.entity_name),
             location: Location(x, y, townEntity),
             description: data.description,
             status: "Alive",
-            currentRole: "Exile", 
-            age: data.age,
-            history: { events: [] }, 
-            knowledge: { memories: data.memories }, 
+            currentRole: "Exile",
+            age: effectiveAge,
+            birthYear,
+            history: { events: [] },
+            knowledge: { memories: data.memories },
             inventory: { items: data.inventory },
             quests: Quests()
         });
-        log(`Injected immigrant: ${data.name}`);
+        log(`Injected immigrant: ${data.name} (age ${effectiveAge})`);
     }
 
     // Apply Deltas
@@ -152,6 +180,12 @@ function injectImmigrantsAndApplyDeltas(world, x, y, townEntity, currentCoordina
                 }
                 entityToUpdate.history.events.push(historyEvent);
                 log(`Appended history to ${entityToUpdate.identity.name}`);
+            } else if (change.state_key === "personalWealth") {
+                entityToUpdate.personalWealth = parseInt(change.state_value);
+                log(`Applied personalWealth delta to ${entityToUpdate.identity.name}`);
+            } else if (change.state_key === "merchantInventory") {
+                entityToUpdate.merchantInventory = JSON.parse(change.state_value);
+                log(`Applied merchantInventory delta to ${entityToUpdate.identity.name}`);
             } else if (change.state_key === "currentMayor") {
                 // Districts always inherit currentMayor from their parent (set by loadAsDistrict).
                 // Skipping the saved delta here prevents a stale 'Unknown' — written on a first
@@ -428,19 +462,27 @@ function serializeChunk(x, y) {
         e.status !== "Migrated"
     );
 
-    const npcData = Array.from(npcs).map(npc => ({
-        id: npc.identity.id,
-        name: npc.identity.name,
-        age: npc.age,
-        role: npc.currentRole,
-        status: npc.status,
-        appearance: generateAppearance(npc.identity.id, npc.age, npc.currentRole, npc.biome || chunkBiome, npc.status),
-        dead: npc.status === 'Dead',
-        inventory: npc.inventory ? npc.inventory.items : [],
-        quests: npc.quests ? npc.quests.offeredQuests : [],
-        history: npc.history ? npc.history.events : [],
-        memories: npc.knowledge ? npc.knowledge.memories : {}
-    }));
+    const currentGlobalYear = getGlobalYear();
+    const npcData = Array.from(npcs).map(npc => {
+        const currentAge = npc.birthYear != null
+            ? currentGlobalYear - npc.birthYear
+            : npc.age;
+        const isDead = npc.status === 'Dead' || currentAge > MAX_NATURAL_LIFESPAN;
+        return {
+            id: npc.identity.id,
+            name: npc.identity.name,
+            age: currentAge,
+            role: npc.currentRole,
+            sex: npc.sex ?? 'other',
+            status: isDead && npc.status !== 'Dead' ? 'Dead' : npc.status,
+            appearance: generateAppearance(npc.identity.id, currentAge, npc.currentRole, npc.biome || chunkBiome, isDead ? 'Dead' : npc.status, npc.sex),
+            dead: isDead,
+            inventory: npc.inventory ? npc.inventory.items : [],
+            quests: npc.quests ? npc.quests.offeredQuests : [],
+            history: npc.history ? npc.history.events : [],
+            memories: npc.knowledge ? npc.knowledge.memories : {}
+        };
+    });
 
     const townData = {
         name:        town ? town.identity.name : "Unknown",
@@ -474,6 +516,15 @@ app.get('/api/chunk/:x/:y', (req, res) => {
     try {
         loadCoordinate(x, y);
         const chunkData = serializeChunk(x, y);
+        const coordinateString = `world_X${x}_Y${y}`;
+        const visitSettlementName = chunkData.town?.name ?? coordinateString;
+        appendJournalEntry({
+            year: chunkData.globalYear,
+            action: 'visit',
+            coordinate: coordinateString,
+            summary: `Visited ${visitSettlementName}`,
+            detail: { settlementName: visitSettlementName }
+        });
         unloadCoordinate(x, y);
         log(`API response: chunk data sent`);
         res.json(chunkData);
@@ -560,6 +611,33 @@ app.post('/api/action/regicide', (req, res) => {
 
 
 
+app.post('/api/trade', (req, res) => {
+    const { x: xStr, y: yStr, npcId, playerState, transaction } = req.body;
+    if (!npcId || !playerState || !transaction) {
+        return res.status(400).json({ error: 'Missing required fields: npcId, playerState, transaction', code: 'INVALID_REQUEST' });
+    }
+    const x = parseInt(xStr);
+    const y = parseInt(yStr);
+    if (isNaN(x) || isNaN(y)) return res.status(400).json({ error: 'Invalid x or y coordinate.', code: 'INVALID_REQUEST' });
+    const coordinate = `world_X${x}_Y${y}`;
+
+    try {
+        loadCoordinate(x, y);
+        const result = actions.executeTrade(world, coordinate, npcId, transaction, playerState);
+        unloadCoordinate(x, y);
+
+        if (!result.success) {
+            return res.status(result.status || 400).json({ error: result.message, playerState });
+        }
+
+        res.json({ playerState, npcInventory: result.npcInventory, event: result.event });
+    } catch (err) {
+        unloadCoordinate(x, y);
+        log(`Trade error: ${err.message}`);
+        res.status(500).json({ error: err.message, code: 'TRADE_ERROR' });
+    }
+});
+
 // 2. Update the endpoint to securely pass the new year
 app.post('/api/action/advance_time', (req, res) => {
     const { x, y, years } = req.body;
@@ -567,10 +645,19 @@ app.post('/api/action/advance_time', (req, res) => {
     
     const currentYear = getGlobalYear();
     const newYear = currentYear + yearsToAdd;
-    
+
     log(`API request: POST /api/action/advance_time, advancing to year ${newYear}`);
     saveDelta("GLOBAL", "Time", "currentYear", newYear.toString());
-    
+
+    const advanceCoordinateString = `world_X${parseInt(x) || 0}_Y${parseInt(y) || 0}`;
+    appendJournalEntry({
+        year: newYear,
+        action: 'advance_time',
+        coordinate: advanceCoordinateString,
+        summary: `Skipped ${yearsToAdd} years (Year ${currentYear} → ${newYear})`,
+        detail: { fromYear: currentYear, toYear: newYear, yearsSkipped: yearsToAdd }
+    });
+
     // FIX: Pass the newYear directly to bypass the database write delay!
     loadCoordinate(x, y, newYear);
     const chunkData = serializeChunk(x, y);
@@ -683,6 +770,41 @@ app.get('/api/chunk/:x/:y/chronicle', (req, res) => {
         unloadCoordinate(x, y);
         log(`Chronicle error at (${x}, ${y}): ${err.message}`);
         res.status(500).json({ error: err.message, code: 'CHRONICLE_ERROR' });
+    }
+});
+
+// --- TRAVELER'S JOURNAL ---
+const JOURNAL_MAX_LIMIT = 500;
+
+app.get('/api/journal', (req, res) => {
+    const { coordinate, npcId, itemId, fromYear, toYear, limit } = req.query;
+    const filters = {};
+    if (coordinate) filters.coordinate = coordinate;
+    if (npcId)      filters.npcId = npcId;
+    if (itemId)     filters.itemId = itemId;
+    if (fromYear)   filters.fromYear = parseInt(fromYear);
+    if (toYear)     filters.toYear = parseInt(toYear);
+    if (limit)      filters.limit = Math.min(parseInt(limit), JOURNAL_MAX_LIMIT);
+
+    try {
+        const { entries, total } = getJournal(filters);
+        const shaped = entries.map(e => ({
+            id:             e.id,
+            year:           e.year,
+            action:         e.action,
+            coordinate:     e.coordinate,
+            settlementName: e.detail?.settlementName ?? null,
+            npcId:          e.npcId,
+            npcName:        e.detail?.npcName ?? null,
+            itemId:         e.itemId,
+            summary:        e.summary,
+            detail:         e.detail,
+        }));
+        log(`GET /api/journal returned ${entries.length} of ${total} entries`);
+        res.json({ entries: shaped, total });
+    } catch (err) {
+        log(`Journal error: ${err.message}`);
+        res.status(500).json({ error: err.message, code: 'JOURNAL_ERROR' });
     }
 });
 

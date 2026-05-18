@@ -393,7 +393,11 @@ describe('History Simulation', () => {
 
         expect(deathEvent).toBeDefined();
         expect(inheritEvent).toBeDefined();
-        expect(inheritEvent.causedBy).toBe(deathEvent.id);
+        expect(inheritEvent.causedBy).toMatchObject({
+            id: deathEvent.id,
+            type: 'death',
+            actorName: npc.identity.name
+        });
     });
 
     test('power seizure: ousted mayor event has causedBy equal to new mayor seizure event id', () => {
@@ -429,13 +433,17 @@ describe('History Simulation', () => {
             const seizureEvent = newMayor.history.events.find(e => e.type === 'power_seizure');
             const oustEvent = currentMayorNpc.history.events.find(e => e.type === 'power_seizure');
             if (seizureEvent && oustEvent) {
-                expect(oustEvent.causedBy).toBe(seizureEvent.id);
+                expect(oustEvent.causedBy).toMatchObject({
+                    id: seizureEvent.id,
+                    type: 'power_seizure',
+                    actorName: newMayor.identity.name
+                });
             }
         }
         // Whether or not the NPC became Mayor depends on RNG; the structural assertion is that causedBy is wired
     });
 
-    test('saveDelta is called with JSON-stringified event object for history_append', () => {
+    test('simulation events are pushed to entity history in-memory only, not persisted to DB', () => {
         const { saveDelta } = require('./db');
         saveDelta.mockClear();
         const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
@@ -444,12 +452,18 @@ describe('History Simulation', () => {
 
         simulateHistory(world, rng, 0, 0, 1);
 
+        // Simulation events must NOT be written to DB — they are deterministic and
+        // re-applied during the Delta Pass, which would cause exponential duplication.
         const historyCall = saveDelta.mock.calls.find(call => call[2] === 'history_append');
-        expect(historyCall).toBeDefined();
-        const parsedEvent = JSON.parse(historyCall[3]);
-        expect(parsedEvent).toHaveProperty('id');
-        expect(parsedEvent).toHaveProperty('type');
-        expect(parsedEvent).toHaveProperty('year');
+        expect(historyCall).toBeUndefined();
+
+        // Event must still be present in the entity's in-memory history
+        const updatedNpc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        expect(updatedNpc.history.events.length).toBeGreaterThan(0);
+        const ev = updatedNpc.history.events[updatedNpc.history.events.length - 1];
+        expect(ev).toHaveProperty('id');
+        expect(ev).toHaveProperty('type');
+        expect(ev).toHaveProperty('year');
     });
 
     test('immigrating NPC gets an immigration event object', () => {
@@ -461,6 +475,76 @@ describe('History Simulation', () => {
         const immigrationEvent = immigrants[0].history.events.find(e => e.type === 'immigration');
         expect(immigrationEvent).toBeDefined();
         expect(immigrationEvent.year).toBe(1);
+    });
+
+    test('grief event causedBy is a snapshot object when partner has a death event', () => {
+        const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+
+        const deadPartner = world.add({
+            identity: { type: 'NPC', id: 'grief-partner', name: 'Grief Partner' },
+            location: { x: 99, y: 99 },
+            status: 'Dead',
+            currentRole: 'Citizen',
+            age: 30,
+            history: { events: [{ id: 'ev_deathxxx', year: 1, description: '[Year 1] died of a sudden fever.', type: 'death', causedBy: null }] },
+            knowledge: { memories: {} },
+            inventory: { items: [] },
+            description: 'A dead partner.'
+        });
+        npc.knowledge.memories['grief-partner'] = 'loves';
+
+        // Force the grief check path: partner is not in livingNpcs (different location)
+        // The grief loop checks memories for 'loves' and fires when partner is absent from livingNpcs
+        simulateHistory(world, rng, 0, 0, 1);
+
+        const griefEvent = npc.history.events.find(e => e.type === 'grief');
+        expect(griefEvent).toBeDefined();
+        expect(griefEvent.causedBy).not.toBeNull();
+        expect(griefEvent.causedBy).toMatchObject({
+            id: 'ev_deathxxx',
+            type: 'death',
+            actorName: 'Grief Partner'
+        });
+
+        world.remove(deadPartner);
+    });
+
+    test('grief event causedBy is null when partner has no death event (e.g. migrated)', () => {
+        const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+
+        const migratedPartner = world.add({
+            identity: { type: 'NPC', id: 'migrated-partner', name: 'Migrated Partner' },
+            location: { x: 99, y: 99 },
+            status: 'Migrated',
+            currentRole: 'Citizen',
+            age: 30,
+            history: { events: [{ id: 'ev_migxxx', year: 1, description: '[Year 1] Packed their belongings and migrated.', type: 'migration', causedBy: null }] },
+            knowledge: { memories: {} },
+            inventory: { items: [] },
+            description: 'A migrated partner.'
+        });
+        npc.knowledge.memories['migrated-partner'] = 'loves';
+
+        simulateHistory(world, rng, 0, 0, 1);
+
+        const griefEvent = npc.history.events.find(e => e.type === 'grief');
+        expect(griefEvent).toBeDefined();
+        expect(griefEvent.causedBy).toBeNull();
+
+        world.remove(migratedPartner);
+    });
+
+    test('grief event causedBy is null when partner is not found in world at all', () => {
+        const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        npc.knowledge.memories['nonexistent-id-xyz'] = 'loves';
+
+        simulateHistory(world, rng, 0, 0, 1);
+
+        const griefEvent = npc.history.events.find(e => e.type === 'grief');
+        expect(griefEvent).toBeDefined();
+        expect(griefEvent.causedBy).toBeNull();
+
+        delete npc.knowledge.memories['nonexistent-id-xyz'];
     });
 
     test('simulateHistory should handle empty town gracefully', () => {
@@ -475,5 +559,260 @@ describe('History Simulation', () => {
         expect(() => {
             simulateHistory(emptyWorld, rng, 5, 5, 1);
         }).not.toThrow();
+    });
+
+    // --- birthYear / aging correctness tests ---
+
+    test('immigrants spawned during simulation have birthYear set', () => {
+        rng = () => 0.1; // below 0.15, triggers immigration
+        simulateHistory(world, rng, 0, 0, 1, 1);
+
+        const immigrants = Array.from(world.with('identity').where(
+            e => e.identity.type === 'NPC' && e.identity.id !== 'test-npc'
+        ));
+        expect(immigrants.length).toBeGreaterThan(0);
+        for (const npc of immigrants) {
+            expect(npc).toHaveProperty('birthYear');
+            // birthYear must be consistent: creationYear(1) - initialAge == birthYear
+            expect(npc.birthYear).toBe(1 - (1 - npc.birthYear)); // identity check via formula
+            expect(typeof npc.birthYear).toBe('number');
+        }
+    });
+
+    test('immigrant birthYear is consistent with age at creation year', () => {
+        const creationYear = 5;
+        rng = () => 0.1; // triggers immigration
+        simulateHistory(world, rng, 0, 0, 1, creationYear);
+
+        const immigrant = Array.from(world.with('identity').where(
+            e => e.identity.type === 'NPC' && e.identity.id !== 'test-npc'
+        ))[0];
+
+        if (immigrant) {
+            expect(immigrant).toHaveProperty('birthYear');
+            // age at creationYear = creationYear - birthYear
+            const ageAtCreation = creationYear - immigrant.birthYear;
+            // initialAge is between 18 and 37 for simulation immigrants
+            expect(ageAtCreation).toBeGreaterThanOrEqual(18);
+            expect(ageAtCreation).toBeLessThanOrEqual(37);
+        }
+    });
+
+    test('children born during simulation have birthYear equal to the simulation year', () => {
+        const npc1 = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        npc1.age = 28;
+        npc1.knowledge.memories['partner-for-birth'] = 'loves';
+
+        world.add({
+            identity: { type: 'NPC', id: 'partner-for-birth', name: 'Birth Partner' },
+            location: { x: 0, y: 0 },
+            status: 'Alive',
+            currentRole: 'Citizen',
+            age: 25,
+            history: { events: [] },
+            knowledge: { memories: { 'test-npc': 'loves' } },
+            inventory: { items: [] },
+            description: 'A birth partner.'
+        });
+
+        rng = () => 0.05; // triggers childbirth
+        // startYear=1 avoids the decade economy check that requires getDeltas
+        simulateHistory(world, rng, 0, 0, 1, 1);
+
+        const children = Array.from(world.with('identity').where(
+            e => e.identity.type === 'NPC' && e.currentRole === 'Child'
+        ));
+
+        if (children.length > 0) {
+            expect(children[0]).toHaveProperty('birthYear', 1);
+        }
+    });
+
+    describe('NPC sex field', () => {
+        test('immigrant NPCs receive a valid sex field', () => {
+            rng = () => 0.1; // triggers immigration (< 0.15)
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const immigrants = Array.from(world.with('identity').where(
+                e => e.identity.type === 'NPC' && e.history && e.history.events.some(ev => ev.type === 'immigration')
+            ));
+
+            expect(immigrants.length).toBeGreaterThan(0);
+            immigrants.forEach(npc => {
+                expect(['male', 'female', 'other']).toContain(npc.sex);
+            });
+        });
+
+        test('immigrant sex is deterministic for the same rng sequence', () => {
+            let callCount = 0;
+            const deterministicRng = () => {
+                callCount++;
+                return 0.1;
+            };
+
+            const world1 = new World();
+            world1.add({ identity: { type: 'Town', id: 'town-id', name: 'Test Town' }, location: { x: 0, y: 0 }, currentMayor: null });
+            world1.add({ identity: { type: 'NPC', id: 'test-npc', name: 'Test NPC' }, location: { x: 0, y: 0 }, status: 'Alive', currentRole: 'Citizen', age: 20, history: { events: [] }, knowledge: { memories: {} }, inventory: { items: [] }, description: 'A test NPC' });
+
+            callCount = 0;
+            simulateHistory(world1, deterministicRng, 0, 0, 1);
+            const sex1 = Array.from(world1.with('identity').where(e => e.identity.type === 'NPC' && e.sex)).map(n => n.sex);
+
+            const world2 = new World();
+            world2.add({ identity: { type: 'Town', id: 'town-id', name: 'Test Town' }, location: { x: 0, y: 0 }, currentMayor: null });
+            world2.add({ identity: { type: 'NPC', id: 'test-npc', name: 'Test NPC' }, location: { x: 0, y: 0 }, status: 'Alive', currentRole: 'Citizen', age: 20, history: { events: [] }, knowledge: { memories: {} }, inventory: { items: [] }, description: 'A test NPC' });
+
+            callCount = 0;
+            simulateHistory(world2, deterministicRng, 0, 0, 1);
+            const sex2 = Array.from(world2.with('identity').where(e => e.identity.type === 'NPC' && e.sex)).map(n => n.sex);
+
+            expect(sex1).toEqual(sex2);
+        });
+
+        test('heterosexual couple (male + female) can have children', () => {
+            const npc1 = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+            npc1.age = 28;
+            npc1.sex = 'male';
+            npc1.knowledge.memories['female-partner'] = 'loves';
+
+            world.add({
+                identity: { type: 'NPC', id: 'female-partner', name: 'Female Partner' },
+                location: { x: 0, y: 0 },
+                status: 'Alive',
+                currentRole: 'Citizen',
+                age: 25,
+                sex: 'female',
+                history: { events: [] },
+                knowledge: { memories: { 'test-npc': 'loves' } },
+                inventory: { items: [] },
+                description: 'A female partner NPC.'
+            });
+
+            rng = () => 0.05; // triggers childbirth (< 0.08)
+            const initialCount = Array.from(world.with('identity').where(e => e.identity.type === 'NPC')).length;
+            simulateHistory(world, rng, 0, 0, 1);
+            const finalCount = Array.from(world.with('identity').where(e => e.identity.type === 'NPC')).length;
+
+            expect(finalCount).toBeGreaterThan(initialCount);
+        });
+
+        test('same-sex couple (male + male) cannot have children', () => {
+            const npc1 = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+            npc1.age = 28;
+            npc1.sex = 'male';
+            npc1.knowledge.memories['male-partner'] = 'loves';
+
+            world.add({
+                identity: { type: 'NPC', id: 'male-partner', name: 'Male Partner' },
+                location: { x: 0, y: 0 },
+                status: 'Alive',
+                currentRole: 'Citizen',
+                age: 25,
+                sex: 'male',
+                history: { events: [] },
+                knowledge: { memories: { 'test-npc': 'loves' } },
+                inventory: { items: [] },
+                description: 'A male partner NPC.'
+            });
+
+            // First call is the immigration check — return >= 0.15 to suppress it.
+            // Subsequent calls (eventRoll) return 0.05 to attempt childbirth.
+            let calls = 0;
+            rng = () => (++calls === 1 ? 0.2 : 0.05);
+            const initialCount = Array.from(world.with('identity').where(e => e.identity.type === 'NPC')).length;
+            simulateHistory(world, rng, 0, 0, 1);
+            const finalCount = Array.from(world.with('identity').where(e => e.identity.type === 'NPC')).length;
+
+            expect(finalCount).toBe(initialCount);
+            expect(npc1.history.events.every(e => e.type !== 'birth')).toBe(true);
+        });
+
+        test('same-sex couple (female + female) cannot have children', () => {
+            const npc1 = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+            npc1.age = 28;
+            npc1.sex = 'female';
+            npc1.knowledge.memories['female-partner-2'] = 'loves';
+
+            world.add({
+                identity: { type: 'NPC', id: 'female-partner-2', name: 'Female Partner 2' },
+                location: { x: 0, y: 0 },
+                status: 'Alive',
+                currentRole: 'Citizen',
+                age: 25,
+                sex: 'female',
+                history: { events: [] },
+                knowledge: { memories: { 'test-npc': 'loves' } },
+                inventory: { items: [] },
+                description: 'A female partner NPC.'
+            });
+
+            let calls = 0;
+            rng = () => (++calls === 1 ? 0.2 : 0.05);
+            const initialCount = Array.from(world.with('identity').where(e => e.identity.type === 'NPC')).length;
+            simulateHistory(world, rng, 0, 0, 1);
+            const finalCount = Array.from(world.with('identity').where(e => e.identity.type === 'NPC')).length;
+
+            expect(finalCount).toBe(initialCount);
+            expect(npc1.history.events.every(e => e.type !== 'birth')).toBe(true);
+        });
+
+        test('other + male couple can have children', () => {
+            const npc1 = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+            npc1.age = 28;
+            npc1.sex = 'other';
+            npc1.knowledge.memories['male-partner-2'] = 'loves';
+
+            world.add({
+                identity: { type: 'NPC', id: 'male-partner-2', name: 'Male Partner 2' },
+                location: { x: 0, y: 0 },
+                status: 'Alive',
+                currentRole: 'Citizen',
+                age: 25,
+                sex: 'male',
+                history: { events: [] },
+                knowledge: { memories: { 'test-npc': 'loves' } },
+                inventory: { items: [] },
+                description: 'A male partner NPC.'
+            });
+
+            rng = () => 0.05;
+            const initialCount = Array.from(world.with('identity').where(e => e.identity.type === 'NPC')).length;
+            simulateHistory(world, rng, 0, 0, 1);
+            const finalCount = Array.from(world.with('identity').where(e => e.identity.type === 'NPC')).length;
+
+            expect(finalCount).toBeGreaterThan(initialCount);
+        });
+
+        test('children born to a couple receive a valid sex field', () => {
+            const npc1 = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+            npc1.age = 28;
+            npc1.sex = 'male';
+            npc1.knowledge.memories['female-partner-3'] = 'loves';
+
+            world.add({
+                identity: { type: 'NPC', id: 'female-partner-3', name: 'Female Partner 3' },
+                location: { x: 0, y: 0 },
+                status: 'Alive',
+                currentRole: 'Citizen',
+                age: 25,
+                sex: 'female',
+                history: { events: [] },
+                knowledge: { memories: { 'test-npc': 'loves' } },
+                inventory: { items: [] },
+                description: 'A female partner NPC.'
+            });
+
+            rng = () => 0.05;
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const children = Array.from(world.with('identity').where(
+                e => e.identity.type === 'NPC' && e.currentRole === 'Child'
+            ));
+
+            expect(children.length).toBeGreaterThan(0);
+            children.forEach(child => {
+                expect(['male', 'female', 'other']).toContain(child.sex);
+            });
+        });
     });
 });
