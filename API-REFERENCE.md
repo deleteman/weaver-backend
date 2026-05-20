@@ -46,7 +46,7 @@ Full 4-pass world load for a coordinate.
     "ruler":       "Kael the Brave",
     "tier":        1,
     "population":  8,
-    "history":     ["[Year 15] Founded the town."]
+    "history":     [{ "id": "ev_3a2b1c4d", "year": 15, "description": "[Year 15] Founded the town.", "type": "legacy", "causedBy": null }]
   },
   "tileDescription": {
     "size":        "small",
@@ -105,6 +105,15 @@ Full 4-pass world load for a coordinate.
       ],
       "memories":  { "npc-id-xyz": "hates" }
     }
+  ],
+  "factions": [
+    {
+      "id":          "faction_abc123",
+      "name":        "Blackthorn",
+      "type":        "blood_feud",
+      "memberCount": 3,
+      "foundedYear": 110
+    }
   ]
 }
 ```
@@ -128,7 +137,7 @@ Full 4-pass world load for a coordinate.
 | `inventory` | object[] | Items carried by this NPC — see Artifact object fields below |
 | `quests` | object[] | Quests this NPC offers |
 | `history` | object[] | This NPC's personal event log — see History Event shape below |
-| `memories` | object | Map of `{ npcId: "hates" \| "avenged" }` |
+| `memories` | object | Map of `{ npcId: memoryState }` where `memoryState` is one of `"hates"` \| `"loves"` \| `"likes"` \| `"mourns"` \| `"parent"` \| `"child"` \| `"avenged"` \| `"satisfied"` |
 
 **Artifact object** — each entry in `inventory[]` has the following fields:
 
@@ -236,10 +245,15 @@ All values are discrete named strings drawn from fixed lists — use them to dri
 | `scars` | Array of `{ location, type }` — 0–2 entries, rare (~15% have one, ~5% have two) |
 | `tattoos` | Array of `{ location, motif }` — 0–2 entries, rare (~12% / ~4%) |
 | `marks` | Array of `{ location, type }` — 0–2 entries, rare (~10% / ~3%) |
+| `faceShape` | `oval`, `square`, `round`, `angular`, `heart` — biome-weighted; children → round-biased, elderly → angular-biased |
+| `eyeShape` | `almond`, `round`, `narrow`, `upturned` — sex-weighted; Cultist → upturned, Scholar → round |
+| `complexion` | `smooth`, `freckled`, `weathered`, `ruddy`, `sallow` — biome-weighted; age/role overrides (age≥50 → weathered, Beggar/Exile → sallow, Guard/Blacksmith → ruddy, children → smooth) |
+| `expressionBias` | `neutral`, `stern`, `weary`, `cheerful`, `suspicious` — role-weighted (Guard: stern/weary; Merchant: cheerful; Scholar: cheerful/suspicious; Cultist: stern/suspicious; Beggar/Exile: weary) |
+| `noseShape` | `button`, `straight`, `broad`, `hooked` — sex-weighted; build overrides (heavyset/stocky → broad, lean/frail/slight → button/straight) |
 
 Role → clothing tier mapping: Mayor/Scholar → noble; Guard → military; Cultist → clergy; Blacksmith/Merchant/Citizen/Child → common; Bandit/Beggar/Exile → outcast.
 
-**Appearance determinism:** all fields are recomputed on every load from three independent sub-seeds of the NPC's `id` (`_appearance`, `_clothing`, `_marks`). The same NPC always has the same appearance at the same age. Age-dependent fields (hair colour, baldness progression, height, build) update automatically as `globalYear` advances — no delta storage required.
+**Appearance determinism:** all fields are recomputed on every load from eight independent sub-seeds of the NPC's `id` (`_appearance`, `_clothing`, `_marks`, `_face`, `_eyes`, `_complexion`, `_expr`, `_nose`). The same NPC always has the same appearance at the same age. Age-dependent fields (hair colour, baldness progression, height, build) update automatically as `globalYear` advances — no delta storage required.
 
 **`tileDescription` object** — included in every chunk response. All values are discrete named strings drawn from fixed lists so frontends can drive rendering without parsing prose.
 
@@ -317,6 +331,68 @@ Full chronological event log for a coordinate. Runs the full 4-pass pipeline.
 ```
 
 Each timeline entry is an object with `actor` (entity name), `text` (event text without the year prefix), `id` (event ID or `null` for legacy rows), `type`, and `causedBy`.
+
+---
+
+### `GET /api/chunk/:x/:y/lineage`
+
+Family-tree data for all Factions that have formed at this coordinate. Includes alive **and** dead NPCs — dead NPCs retain their `ancestralMemories`, enabling full chain traversal.
+
+**Response:**
+```json
+{
+  "coordinate": "world_X2_Y3",
+  "factions": [
+    {
+      "id":           "faction_abc123",
+      "name":         "House Blackthorn",
+      "type":         "blood_feud",
+      "targetLineage":"npc_rival_id",
+      "foundedYear":  200,
+      "rootAncestor": { "npcId": "npc_original", "npcName": "Eredin Blackthorn", "year": 100 },
+      "members": [
+        {
+          "npcId":       "npc_003",
+          "npcName":     "Serath Blackthorn",
+          "currentRole": "Guard",
+          "status":      "Alive",
+          "inheritanceChain": [
+            { "npcId": "npc_original", "npcName": "Eredin Blackthorn", "year": 100, "status": "Dead" },
+            { "npcId": "npc_002",      "npcName": "Mira Blackthorn",   "year": 150, "status": "Dead" },
+            { "npcId": "npc_003",      "npcName": "Serath Blackthorn", "year": 195, "status": "Alive" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Faction entity ID |
+| `name` | string | Deterministic faction name (generated from faction seed) |
+| `type` | string | One of: `blood_feud`, `ancestral_ally`, `ancestral_debt`, `ancestral_shame`, `ancestral_reverence`, `ancestral_mourning` |
+| `targetLineage` | string | ID of the NPC, item, or entity this faction is bound to |
+| `foundedYear` | number | In-world year the faction coalesced |
+| `rootAncestor` | object | `{ npcId, npcName, year }` — the NPC whose original memory started the lineage |
+| `members[].inheritanceChain` | object[] | Ordered list from root ancestor to current member. Reconstructed by walking `inheritedFrom` pointers across alive and dead NPCs — never stored redundantly. |
+| `members[].status` | string | `"Alive"` or `"Dead"` — lets frontends distinguish living vs. historical members |
+
+**`inheritanceChain` reconstruction:** the engine walks each member's `inheritedFrom` pointer backward through ECS entities (alive and dead) until the root is reached. The chain is computed at request time; it is not stored in the raw data.
+
+**Faction types and their origin:**
+
+| `type` | Source memory | Spawn condition |
+|---|---|---|
+| `blood_feud` | `hate` (intensity ≥ 7) | 3+ NPCs, 50+ years |
+| `ancestral_ally` | `love` (intensity ≥ 7) | 3+ NPCs, 50+ years |
+| `ancestral_debt` | `debt` (intensity ≥ 7) | 3+ NPCs, 100+ years |
+| `ancestral_shame` | `shame` (intensity ≥ 7) | 3+ NPCs, 100+ years |
+| `ancestral_reverence` | `reverence` (intensity ≥ 7) | 3+ NPCs, 100+ years |
+| `ancestral_mourning` | `grief` (intensity ≥ 7) | 3+ NPCs, 100+ years |
 
 ---
 
@@ -585,6 +661,11 @@ Deliver an item to an NPC (Fetch quest) **or** report a completed bounty.
 - Giving `Jewelry` → NPC role becomes `"Cultist"`
 - Item type must match the NPC's Fetch quest `itemType` if they have one
 
+**Mystery Heist mechanics (+50 XP, +20 reputation):**
+- `itemId` must match the `itemId` on the NPC's `"Mystery Heist"` quest
+- Clears the questGiver's `"hates"` memory for the enemy to `"satisfied"` (persisted as a delta)
+- Removes the `"Mystery Heist"` quest from the NPC's `quests` array — it will not regenerate on future chunk loads
+
 **Bounty report mechanics (+100 XP, +30 reputation):**
 - NPC must have a `"hates"` memory for a now-dead NPC
 - Clears that memory to `"avenged"`
@@ -618,7 +699,7 @@ Exile a living NPC to a random coordinate.
 
 **Required fields:** `x`, `y`, `target`, `playerState`
 
-**Mechanics:** NPC status → `"Exiled"` (excluded from future responses at origin); NPC data injected as immigrant at a random destination coordinate; −15 reputation. The response message includes the destination coordinates.
+**Mechanics:** NPC status → `"Exiled"`; the NPC remains in the population array with `status: "Exiled"` on all future responses at the origin coordinate (same behaviour as `"Dead"`). NPC data is also injected as an immigrant at a random destination coordinate; −15 reputation. The response message includes the destination coordinates.
 
 ---
 

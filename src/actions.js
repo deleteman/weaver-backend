@@ -2,10 +2,12 @@
 const { saveDelta, getDeltas, getGlobalYear, getSuzerainForCoordinate, getTierForCoordinate, getRuinHoard, appendJournalEntry } = require('./db');
 const { generateArtifact } = require('./items');
 const { log } = require('./logger');
-const { makeEvent } = require('./event-utils');
+const { makeEvent, buildCausedBySnapshot } = require('./event-utils');
 const seedrandom = require('seedrandom');
 const { ArtifactEffects } = require('./artifact-effects');
 const { PlayerMechanics } = require('./player-mechanics');
+const { QUEST_TYPES } = require('./quests');
+const { MEMORY_STATES } = require('./history');
 
 const LOG_PREFIX = '[ACTION]';
 
@@ -47,6 +49,31 @@ function appendHistory(coordinate, entity, event) {
     entity.history.events.push(evObj);
     saveDelta(coordinate, entity.identity.id, 'history_append', JSON.stringify(evObj));
     actionLog('appendHistory', { coordinate, entityId: entity.identity.id, eventId: evObj.id });
+}
+
+const GRIEF_MESSAGES = {
+    loves:  'Was heartbroken by the loss of their love.',
+    parent: 'Was grief-stricken by the death of their parent.',
+    child:  'Was devastated by the loss of their child.',
+};
+
+function triggerMourningForLovedOnes(world, coordinate, deceasedNPC, currentYear) {
+    const mourners = world.with('identity', 'status', 'knowledge', 'history').where(e =>
+        e.identity.type === 'NPC' &&
+        e.status === 'Alive' &&
+        GRIEF_MESSAGES[e.knowledge?.memories?.[deceasedNPC.identity.id]] !== undefined
+    );
+    const deathEvents = deceasedNPC.history?.events ?? [];
+    const causingEvent = deathEvents[deathEvents.length - 1] ?? null;
+    const causedBy = buildCausedBySnapshot(causingEvent, deceasedNPC.identity.name);
+    for (const mourner of mourners) {
+        const relationship = mourner.knowledge.memories[deceasedNPC.identity.id];
+        const griefEvent = makeEvent(`[Year ${currentYear}] ${GRIEF_MESSAGES[relationship]}`, 'grief', causedBy);
+        appendHistory(coordinate, mourner, griefEvent);
+        mourner.knowledge.memories[deceasedNPC.identity.id] = 'mourns';
+        saveDelta(coordinate, mourner.identity.id, `memory_${deceasedNPC.identity.id}`, 'mourns');
+        actionLog('triggerMourning', { mournerID: mourner.identity.id, deceasedId: deceasedNPC.identity.id, year: currentYear, relationship });
+    }
 }
 
 function awardXP(playerState, amount) {
@@ -190,7 +217,8 @@ function assassinate(world, coordinate, targetId, playerState) {
         targetNPC.status = "Dead";
         saveDelta(coordinate, targetNPC.identity.id, "status", "Dead");
         appendHistory(coordinate, targetNPC, makeEvent(`[Year ${currentYear}] Assassinated by a mysterious traveler.`, 'assassination'));
-        
+        triggerMourningForLovedOnes(world, coordinate, targetNPC, currentYear);
+
         let msg = `🗡️ You assassinated ${targetNPC.identity.name}!`;
         const leveled = awardXP(playerState, 75);
 
@@ -242,6 +270,17 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
         itemId = null;
     }
 
+    // Auto-detect fetch quest item when client sends no itemId (bought items pre-fix,
+    // or old playerState data with itemId instead of id).
+    if (!itemId) {
+        const questGiverForFetch = findEntity(world, targetId, ['quests']);
+        const fetchQuest = questGiverForFetch?.quests?.offeredQuests?.find(q => q.type === QUEST_TYPES.FETCH);
+        if (fetchQuest) {
+            const match = playerState?.inventory?.find(i => i.type === fetchQuest.itemType);
+            if (match) itemId = match.id || match.itemId;
+        }
+    }
+
     playerState = ensurePlayerState(playerState);
 
     const questGiver = findEntity(world, targetId, ['identity', 'inventory', 'status', 'currentRole', 'knowledge']);
@@ -253,12 +292,12 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
     }
 
     if (itemId) {
-        const playerItemIndex = playerState.inventory.findIndex(i => i.id === itemId);
+        const playerItemIndex = playerState.inventory.findIndex(i => (i.id || i.itemId) === itemId);
 
         if (playerItemIndex > -1) {
             const donatedItem = playerState.inventory[playerItemIndex];
             
-            const fetchQuest = questGiver.quests.offeredQuests.find(q => q.type === "Fetch");
+            const fetchQuest = questGiver.quests.offeredQuests.find(q => q.type === QUEST_TYPES.FETCH);
             if (fetchQuest && donatedItem.type !== fetchQuest.itemType) {
                 return { success: false, message: `They are looking for a ${fetchQuest.itemType}, not a ${donatedItem.type}.` };
             }
@@ -280,7 +319,17 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
                 ArtifactEffects.applyJewelryEffect(world, cx, cy, donatedItem, questGiver, artifactRng);
             } else if (donatedItem.type === "Relic") {
                 const npcs = Array.from(world.with('identity', 'status').where(e => e.identity.type === 'NPC' && e.status === 'Alive'));
-                ArtifactEffects.applyRelicEffect(world, cx, cy, donatedItem, questGiver, npcs, artifactRng);
+                ArtifactEffects.applyRelicEffect(world, cx, cy, donatedItem, questGiver, npcs, artifactRng, currentYear);
+            }
+
+            const heistQuest = questGiver.quests?.offeredQuests?.find(
+                q => q.type === QUEST_TYPES.MYSTERY_HEIST && q.itemId === itemId
+            );
+            if (heistQuest) {
+                const enemyId = heistQuest.target;
+                questGiver.knowledge.memories[enemyId] = MEMORY_STATES.SATISFIED;
+                saveDelta(coordinate, questGiver.identity.id, `memory_${enemyId}`, MEMORY_STATES.SATISFIED);
+                questGiver.quests.offeredQuests = questGiver.quests.offeredQuests.filter(q => q !== heistQuest);
             }
 
             const roleChanged = questGiver.currentRole !== roleBeforeEffect;
@@ -319,7 +368,7 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
         let avengedTargetId = null;
 
         for (const [enemyId, feeling] of Object.entries(questGiver.knowledge.memories)) {
-            if (feeling === "hates") {
+            if (feeling === MEMORY_STATES.HATES) {
                 const enemy = world.with('identity', 'status').where(e => e.identity.id === enemyId).first;
                 if (enemy && enemy.status === "Dead") {
                     avengedTargetName = enemy.identity.name;
@@ -330,8 +379,8 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
         }
 
         if (avengedTargetName) {
-            questGiver.knowledge.memories[avengedTargetId] = "avenged"; 
-            saveDelta(coordinate, questGiver.identity.id, `memory_${avengedTargetId}`, "avenged");
+            questGiver.knowledge.memories[avengedTargetId] = MEMORY_STATES.AVENGED;
+            saveDelta(coordinate, questGiver.identity.id, `memory_${avengedTargetId}`, MEMORY_STATES.AVENGED);
             appendHistory(coordinate, questGiver, makeEvent(`[Year ${currentYear}] Was finally avenged when the traveler eliminated ${avengedTargetName}.`, 'assassination'));
 
             maybeAwardTitle(playerState, 'bountiesCompleted', 3, 'Master Assassin');
@@ -422,9 +471,9 @@ function taxTown(world, coordinate, playerState) {
             playerState.inventory.push(confiscated);
             itemsStolen++;
             
-            citizen.knowledge.memories["The Player"] = "hates";
+            citizen.knowledge.memories["The Player"] = MEMORY_STATES.HATES;
             persistInventory(coordinate, citizen);
-            saveDelta(coordinate, citizen.identity.id, "memory_The Player", "hates");
+            saveDelta(coordinate, citizen.identity.id, "memory_The Player", MEMORY_STATES.HATES);
             actionLog('taxTown:confiscated', { citizenId: citizen.identity.id, confiscatedId: confiscated.id });
         }
     }
@@ -499,7 +548,7 @@ function banish(world, coordinate, targetId, playerState) {
     const destY = Math.floor(banishRng() * 100);
     const destCoordinate = `world_X${destX}_Y${destY}`;
 
-    targetNPC.knowledge.memories["The Player"] = "hates";
+    targetNPC.knowledge.memories["The Player"] = MEMORY_STATES.HATES;
     const immigrantData = {
         name: targetNPC.identity.name,
         description: targetNPC.description,
@@ -580,64 +629,69 @@ function lootTomb(world, coordinate, targetId, playerState) {
     actionLog('lootTomb:start', { coordinate, targetId });
     playerState = ensurePlayerState(playerState);
 
-    // Ruin Hoard path: when the tile itself is a Ruin (tier 0), yield gold + possible item
-    const tileTier = getTierForCoordinate(coordinate);
-    if (tileTier === 0) {
-        const currentYear = getGlobalYear();
-        const ruinRng = seedrandom(`${coordinate}_loot_${currentYear}`);
-        const goldFound = Math.floor(ruinRng() * 10 + 1) * 100;
+    // NPC Tomb path: caller specified a target → loot that dead NPC's tomb
+    if (targetId) {
+        const targetNPC = findEntity(world, targetId, ['identity', 'inventory', 'status']);
 
-        if (!playerState.inventory) playerState.inventory = [];
-        if (typeof playerState.gold !== 'number') playerState.gold = 0;
-        playerState.gold += goldFound;
-
-        let lootedItem = null;
-        const hoardRow = getRuinHoard(coordinate);
-        if (hoardRow && ruinRng() < 0.10) {
-            lootedItem = generateArtifact(ruinRng, coordinate, currentYear, 'ruin_hoard');
-            playerState.inventory.push(lootedItem);
+        if (!targetNPC || targetNPC.status === "Alive") {
+            actionLog('lootTomb:invalid-target', { targetId });
+            return { success: false, message: `Target not found or is still alive!` };
+        }
+        if (targetNPC.inventory.items.length === 0) {
+            actionLog('lootTomb:empty-tomb', { targetId });
+            return { success: false, message: `The tomb is empty.` };
         }
 
+        const lootedItems = [...targetNPC.inventory.items];
+        playerState.inventory.push(...lootedItems);
+        targetNPC.inventory.items = [];
+        persistInventory(coordinate, targetNPC);
+
+        applyReputationWithPropagation(playerState, coordinate, -5);
         appendJournalEntry({
-            year: currentYear,
+            year: getCurrentYear(coordinate),
             action: 'loot_tomb',
             coordinate,
-            itemId: lootedItem?.id ?? null,
-            summary: `Looted ruin at ${coordinate} — found ${goldFound}g${lootedItem ? ` and ${lootedItem.name}` : ''}`,
-            detail: { goldFound, itemName: lootedItem?.name ?? null }
+            npcId: targetNPC.identity.id,
+            summary: `Looted ${targetNPC.identity.name} — took ${lootedItems.length} item(s)`,
+            detail: { settlementName: getSettlementName(world), npcName: targetNPC.identity.name, itemCount: lootedItems.length }
         });
-        actionLog('lootTomb:ruin-hoard', { coordinate, goldFound, itemFound: lootedItem?.name || null });
-        const itemPart = lootedItem ? ` and ${lootedItem.name}` : '';
-        return { success: true, message: `You looted the ruin and found ${goldFound}g${itemPart}.` };
+        actionLog('lootTomb:success', { targetId, lootedCount: lootedItems.length });
+        return { success: true, message: `🦇 You looted the tomb of ${targetNPC.identity.name} and found: ${lootedItems.map(i => i.name).join(", ")}. (-5 Reputation)` };
     }
 
-    const targetNPC = findEntity(world, targetId, ['identity', 'inventory', 'status']);
-
-    if (!targetNPC || targetNPC.status === "Alive") {
-        actionLog('lootTomb:invalid-target', { targetId });
-        return { success: false, message: `Target not found or is still alive!` };
-    }
-    if (targetNPC.inventory.items.length === 0) {
-        actionLog('lootTomb:empty-tomb', { targetId });
-        return { success: false, message: `The tomb is empty.` };
+    // Ruin Hoard path: no targetId → loot the tile if it is a ruin (tier 0)
+    const tileTier = getTierForCoordinate(coordinate);
+    if (tileTier !== 0) {
+        return { success: false, message: `There is nothing to loot here.` };
     }
 
-    const lootedItems = [...targetNPC.inventory.items];
-    playerState.inventory.push(...lootedItems);
-    targetNPC.inventory.items = [];
-    persistInventory(coordinate, targetNPC);
+    const currentYear = getGlobalYear();
+    const ruinRng = seedrandom(`${coordinate}_loot_${currentYear}`);
+    const goldFound = Math.floor(ruinRng() * 10 + 1) * 100;
 
-    applyReputationWithPropagation(playerState, coordinate, -5);
+    if (!playerState.inventory) playerState.inventory = [];
+    if (typeof playerState.gold !== 'number') playerState.gold = 0;
+    playerState.gold += goldFound;
+
+    let lootedItem = null;
+    const hoardRow = getRuinHoard(coordinate);
+    if (hoardRow && ruinRng() < 0.10) {
+        lootedItem = generateArtifact(ruinRng, coordinate, currentYear, 'ruin_hoard');
+        playerState.inventory.push(lootedItem);
+    }
+
     appendJournalEntry({
-        year: getCurrentYear(coordinate),
+        year: currentYear,
         action: 'loot_tomb',
         coordinate,
-        npcId: targetNPC.identity.id,
-        summary: `Looted ${targetNPC.identity.name} — took ${lootedItems.length} item(s)`,
-        detail: { settlementName: getSettlementName(world), npcName: targetNPC.identity.name, itemCount: lootedItems.length }
+        itemId: lootedItem?.id ?? null,
+        summary: `Looted ruin at ${coordinate} — found ${goldFound}g${lootedItem ? ` and ${lootedItem.name}` : ''}`,
+        detail: { goldFound, itemName: lootedItem?.name ?? null }
     });
-    actionLog('lootTomb:success', { targetId, lootedCount: lootedItems.length });
-    return { success: true, message: `🦇 You looted the tomb of ${targetNPC.identity.name} and found: ${lootedItems.map(i => i.name).join(", ")}. (-5 Reputation)` };
+    actionLog('lootTomb:ruin-hoard', { coordinate, goldFound, itemFound: lootedItem?.name || null });
+    const itemPart = lootedItem ? ` and ${lootedItem.name}` : '';
+    return { success: true, message: `You looted the ruin and found ${goldFound}g${itemPart}.` };
 }
 
 function regicide(world, coordinate, targetId, weaponTier, playerState) {
@@ -661,6 +715,7 @@ function regicide(world, coordinate, targetId, weaponTier, playerState) {
         targetNPC.status = 'Dead';
         saveDelta(coordinate, targetNPC.identity.id, 'status', 'Dead');
         appendHistory(coordinate, targetNPC, makeEvent(`[Year ${currentYear}] Slain by the Traveler in an act of regicide.`, 'regicide'));
+        triggerMourningForLovedOnes(world, coordinate, targetNPC, currentYear);
 
         if (town) {
             town.currentMayor = 'The Player';
@@ -726,7 +781,8 @@ function executeTrade(world, coordinate, npcId, transaction, playerState) {
 
         playerState.inventory = playerState.inventory || [];
         for (let i = 0; i < quantity; i++) {
-            playerState.inventory.push({ ...slot, quantity: 1 });
+            const { itemId: slotItemId, ...rest } = slot;
+            playerState.inventory.push({ ...rest, id: slotItemId, quantity: 1 });
         }
 
         // Market Depletion check — track against primaryExport slots before this purchase
@@ -764,6 +820,21 @@ function executeTrade(world, coordinate, npcId, transaction, playerState) {
         const salePrice = Math.floor((playerSlot.price || playerSlot.value || 100) * 0.8 / fearModifier);
         playerState.gold = (playerState.gold || 0) + salePrice;
         playerState.inventory = (playerState.inventory || []).filter(i => (i.itemId || i.id) !== itemId);
+
+        npc.merchantInventory = npc.merchantInventory || [];
+        const existingSlot = npc.merchantInventory.find(i => i.itemId === (playerSlot.itemId || playerSlot.id));
+        if (existingSlot) {
+            existingSlot.quantity += 1;
+        } else {
+            npc.merchantInventory.push({
+                itemId: playerSlot.itemId || playerSlot.id,
+                name: playerSlot.name,
+                type: playerSlot.type,
+                tier: playerSlot.tier ?? 1,
+                quantity: 1,
+                price: salePrice
+            });
+        }
 
         // Merchant Ascendancy — selling a Relic
         if (playerSlot.prefix === 'Relic' && town) {

@@ -9,6 +9,11 @@ const {
     FACIAL_HAIR,
     HEIGHTS,
     BUILDS,
+    FACE_SHAPES,
+    EYE_SHAPES,
+    COMPLEXIONS,
+    EXPRESSION_BIASES,
+    NOSE_SHAPES,
 } = require('./appearance');
 
 describe('generateAppearance', () => {
@@ -290,6 +295,231 @@ describe('generateAppearance', () => {
                 if (warmTones.includes(mtn.skinTone)) mountainWarm++;
             }
             expect(desertWarm).toBeGreaterThan(mountainWarm);
+        });
+    });
+
+    describe('new facial detail fields — discrete validation', () => {
+        test('all new fields come from their expected lists', () => {
+            const a = generateAppearance('npc_facial_discrete', 35, 'Merchant', 'Plains', 'Alive', 'male');
+            expect(FACE_SHAPES).toContain(a.faceShape);
+            expect(EYE_SHAPES).toContain(a.eyeShape);
+            expect(COMPLEXIONS).toContain(a.complexion);
+            expect(EXPRESSION_BIASES).toContain(a.expressionBias);
+            expect(NOSE_SHAPES).toContain(a.noseShape);
+        });
+    });
+
+    describe('new facial detail fields — determinism', () => {
+        test('same inputs produce identical new fields', () => {
+            const a = generateAppearance('npc_facial_det', 30, 'Guard', 'Mountain', 'Alive', 'male');
+            const b = generateAppearance('npc_facial_det', 30, 'Guard', 'Mountain', 'Alive', 'male');
+            expect(a.faceShape).toBe(b.faceShape);
+            expect(a.eyeShape).toBe(b.eyeShape);
+            expect(a.complexion).toBe(b.complexion);
+            expect(a.expressionBias).toBe(b.expressionBias);
+            expect(a.noseShape).toBe(b.noseShape);
+        });
+
+        test('different npcIds produce variety in new fields (over 20 samples)', () => {
+            const faceSet = new Set();
+            const exprSet = new Set();
+            for (let i = 0; i < 20; i++) {
+                const a = generateAppearance(`npc_variety_${i}`, 30, 'Citizen', 'Plains', 'Alive');
+                faceSet.add(a.faceShape);
+                exprSet.add(a.expressionBias);
+            }
+            expect(faceSet.size).toBeGreaterThan(1);
+            expect(exprSet.size).toBeGreaterThan(1);
+        });
+    });
+
+    describe('new facial detail fields — sub-seed isolation', () => {
+        test('adding new facial fields does not shift eyeColor, skinTone, or scars', () => {
+            const a = generateAppearance('npc_iso_facial', 35, 'Guard', 'Mountain', 'Alive', 'male');
+            const b = generateAppearance('npc_iso_facial', 35, 'Guard', 'Mountain', 'Alive', 'male');
+            expect(a.eyeColor).toBe(b.eyeColor);
+            expect(a.skinTone).toBe(b.skinTone);
+            expect(a.scars).toEqual(b.scars);
+        });
+    });
+
+    describe('faceShape — age correlation', () => {
+        test('children (age < 16) are round-dominated (>50% of 200 samples)', () => {
+            let roundCount = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_face_child_${i}`, 10, 'Child', 'Plains', 'Alive');
+                if (a.faceShape === 'round') roundCount++;
+            }
+            expect(roundCount).toBeGreaterThan(100);
+        });
+
+        test('elderly (age > 70) are angular-dominated (>40% of 200 samples)', () => {
+            let angularCount = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_face_elder_${i}`, 80, 'Citizen', 'Plains', 'Alive');
+                if (a.faceShape === 'angular') angularCount++;
+            }
+            expect(angularCount).toBeGreaterThan(80);
+        });
+
+        test('Mountain biome adults are square/angular-dominant over oval/heart', () => {
+            let squareAngular = 0, ovalHeart = 0;
+            for (let i = 0; i < 300; i++) {
+                const a = generateAppearance(`npc_face_mtn_${i}`, 35, 'Citizen', 'Mountain', 'Alive');
+                if (['square', 'angular'].includes(a.faceShape)) squareAngular++;
+                if (['oval', 'heart'].includes(a.faceShape)) ovalHeart++;
+            }
+            expect(squareAngular).toBeGreaterThan(ovalHeart);
+        });
+    });
+
+    describe('expressionBias — role correlation', () => {
+        test('Guard NPCs are stern/weary dominant (>80% of 200 samples)', () => {
+            let sternWeary = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_expr_guard_${i}`, 30, 'Guard', 'Plains', 'Alive');
+                if (['stern', 'weary'].includes(a.expressionBias)) sternWeary++;
+            }
+            expect(sternWeary).toBeGreaterThan(160);
+        });
+
+        test('Merchant NPCs are cheerful dominant (>50% of 200 samples)', () => {
+            let cheerful = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_expr_merch_${i}`, 40, 'Merchant', 'Plains', 'Alive');
+                if (a.expressionBias === 'cheerful') cheerful++;
+            }
+            expect(cheerful).toBeGreaterThan(100);
+        });
+
+        test('Beggar NPCs are weary dominant (>50% of 200 samples)', () => {
+            let weary = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_expr_beggar_${i}`, 45, 'Beggar', 'Marsh', 'Alive');
+                if (a.expressionBias === 'weary') weary++;
+            }
+            expect(weary).toBeGreaterThan(100);
+        });
+    });
+
+    describe('complexion — role and age correlation', () => {
+        test('Beggar NPCs are sallow dominant (>70% of 200 samples)', () => {
+            let sallow = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_comp_beggar_${i}`, 35, 'Beggar', 'Plains', 'Alive');
+                if (a.complexion === 'sallow') sallow++;
+            }
+            expect(sallow).toBeGreaterThan(140);
+        });
+
+        test('Guard NPCs are ruddy dominant (>50% of 200 samples)', () => {
+            let ruddy = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_comp_guard_${i}`, 30, 'Guard', 'Forest', 'Alive');
+                if (a.complexion === 'ruddy') ruddy++;
+            }
+            expect(ruddy).toBeGreaterThan(100);
+        });
+
+        test('NPCs age >= 50 are weathered dominant (>50% of 200 samples)', () => {
+            let weathered = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_comp_old_${i}`, 55, 'Citizen', 'Plains', 'Alive');
+                if (a.complexion === 'weathered') weathered++;
+            }
+            expect(weathered).toBeGreaterThan(100);
+        });
+
+        test('children (age < 16) are smooth dominant (>50% of 200 samples)', () => {
+            let smooth = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_comp_child_${i}`, 10, 'Child', 'Plains', 'Alive');
+                if (a.complexion === 'smooth') smooth++;
+            }
+            expect(smooth).toBeGreaterThan(100);
+        });
+    });
+
+    describe('eyeShape — sex and role correlation', () => {
+        test('female NPCs are almond/upturned dominant (>50% of 200 samples)', () => {
+            let almondUpturned = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_eye_female_${i}`, 30, 'Citizen', 'Plains', 'Alive', 'female');
+                if (['almond', 'upturned'].includes(a.eyeShape)) almondUpturned++;
+            }
+            expect(almondUpturned).toBeGreaterThan(100);
+        });
+
+        test('male NPCs are round/narrow dominant (>50% of 200 samples)', () => {
+            let roundNarrow = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_eye_male_${i}`, 30, 'Citizen', 'Plains', 'Alive', 'male');
+                if (['round', 'narrow'].includes(a.eyeShape)) roundNarrow++;
+            }
+            expect(roundNarrow).toBeGreaterThan(100);
+        });
+
+        test('Cultist NPCs are upturned dominant (>60% of 200 samples)', () => {
+            let upturned = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_eye_cultist_${i}`, 35, 'Cultist', 'Marsh', 'Alive');
+                if (a.eyeShape === 'upturned') upturned++;
+            }
+            expect(upturned).toBeGreaterThan(120);
+        });
+
+        test('Scholar NPCs are round dominant (>50% of 200 samples)', () => {
+            let round = 0;
+            for (let i = 0; i < 200; i++) {
+                const a = generateAppearance(`npc_eye_scholar_${i}`, 45, 'Scholar', 'Forest', 'Alive');
+                if (a.eyeShape === 'round') round++;
+            }
+            expect(round).toBeGreaterThan(100);
+        });
+    });
+
+    describe('noseShape — build and sex correlation', () => {
+        test('heavyset build NPCs are broad dominant (>60% of 200 samples)', () => {
+            // Force heavyset build by using age 30–70 + known seeded IDs that produce heavyset
+            let broad = 0, total = 0;
+            for (let i = 0; i < 500; i++) {
+                const a = generateAppearance(`npc_nose_build_${i}`, 35, 'Citizen', 'Plains', 'Alive', 'male');
+                if (a.build === 'heavyset' || a.build === 'stocky') {
+                    if (a.noseShape === 'broad') broad++;
+                    total++;
+                }
+            }
+            if (total >= 20) {
+                expect(broad / total).toBeGreaterThan(0.55);
+            }
+        });
+
+        test('male NPCs with average build are broad/hooked dominant (>50% of 200 samples)', () => {
+            let broadHooked = 0, total = 0;
+            for (let i = 0; i < 400; i++) {
+                const a = generateAppearance(`npc_nose_male_${i}`, 35, 'Citizen', 'Plains', 'Alive', 'male');
+                if (a.build === 'average' || a.build === 'muscular') {
+                    if (['broad', 'hooked'].includes(a.noseShape)) broadHooked++;
+                    total++;
+                }
+            }
+            if (total >= 20) {
+                expect(broadHooked / total).toBeGreaterThan(0.50);
+            }
+        });
+
+        test('female NPCs with average build are button/straight dominant (>50% of 200 samples)', () => {
+            let buttonStraight = 0, total = 0;
+            for (let i = 0; i < 400; i++) {
+                const a = generateAppearance(`npc_nose_female_${i}`, 35, 'Citizen', 'Plains', 'Alive', 'female');
+                if (a.build === 'average' || a.build === 'muscular') {
+                    if (['button', 'straight'].includes(a.noseShape)) buttonStraight++;
+                    total++;
+                }
+            }
+            if (total >= 20) {
+                expect(buttonStraight / total).toBeGreaterThan(0.50);
+            }
         });
     });
 

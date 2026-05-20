@@ -22,11 +22,12 @@ Project Weaver is a fully functional Just-In-Time (JIT) Procedural RPG Engine ca
 - ✅ **Macro-Political Engine**: Settlement tiers, territory claiming, conflict resolution
 - ✅ **Migration System**: NPCs migrate between coordinates persistently
 - ✅ **Fog of War**: Lightweight mini-map generation with territory ownership (`claimedBy` / `claimedByName` / `districtType` per tile; sovereign tiles return `null` for all three)
-- ✅ **NPC Appearance System**: Fully structured, deterministic appearance objects per NPC — eye colour, skin tone, biome-weighted skin distribution, age-driven hair/build/height progression, role-tiered clothing, and rare marks (scars, tattoos, birthmarks)
+- ✅ **NPC Appearance System**: Fully structured, deterministic appearance objects per NPC — eye colour, skin tone, biome-weighted skin distribution, age-driven hair/build/height progression, role-tiered clothing, rare marks (scars, tattoos, birthmarks), and facial detail fields (`faceShape`, `eyeShape`, `complexion`, `expressionBias`, `noseShape`) weighted by biome/age/role/sex/build
 - ✅ **Tile Description System**: Every chunk response includes a `tileDescription` object with discrete fields for size, atmosphere, walls, streets, surroundings, landmark, and role-derived buildings. Map tiles include a lighter `tileDescription` (terrain, vegetation, settlementSilhouette) computed without ECS instantiation.
 - ✅ **Settlement Economy Simulation**: Per-decade production/consumption loop with Economic Boom and Famine events; Time Capsule discovery and trigger system (Banking Guild, Hyperinflation, Scholarly/Militaristic traits); Macro trade routes with Ruin partner severance and Shortage modifiers; Ruin Hoard locking and recovery via `loot_tomb`.
 - ✅ **Temporal Commerce** (`POST /api/trade`): Merchant NPCs carry deterministic inventories (4–8 `primaryExport` resource slots + 1–2 artifacts) and `personalWealth` (500–3000g) seeded at NPC generation. Buying > 80% of a Merchant's `primaryExport` stock triggers Market Depletion (`shortage` delta). Selling a Relic (age > 300yr) to a Merchant whose wealth exceeds 15 000g triggers Merchant Ascendancy (`plutocracy_candidate` delta → Plutocracy takeover on next `advance_time`). Price stubs read `town.mythos?.fearModifier ?? 1.0`, ready for item 14.
 - ✅ **Traveler's Journal** (`GET /api/journal`): Every player action and chunk visit is appended to a dedicated `journal` SQLite table with NPC, item, and coordinate linking. Filterable by coordinate, npcId, itemId, year range, and limit. Response surfaces `settlementName` and `npcName` at the top level; structured `detail` blobs carry action-specific data (xpGained, goldFound, qty, price). Journal entries are written for all 14 action types plus chunk visits and time-skips.
+- ✅ **Generational Bloodlines** (`GET /api/chunk/:x/:y/lineage`): NPCs accumulate 6 types of structured emotional memories (`love`, `hate`, `debt`, `shame`, `reverence`, `grief`). On death, qualifying memories (intensity ≥ 7) propagate to heirs via `propagate_memories()`. After 50+ years (`blood_feud`/`ancestral_ally`) or 100+ years (all others), 3+ NPCs sharing an ancestral bond coalesce into a named Faction entity. Faction names are deterministic. The `inheritedFrom` linked-list pattern enables full chain reconstruction at query time without redundant storage. Dead NPCs persist in ECS world so `/lineage` can walk chains backward. A `factions` summary array is included in every `GET /api/chunk` response.
 
 ---
 
@@ -272,6 +273,7 @@ simulate_economy(town, years, rng, coordinate, globalYear)
 - `GET /api/coordinate?x=X&y=Y` - Alternative query syntax
 - `GET /api/map/:x/:y/:radius` - Fog of war mini-map (each tile includes `claimedBy` / `claimedByName` / `districtType` for territory grouping; `null` for sovereign tiles)
 - `GET /api/chunk/:x/:y/chronicle` - Town history timeline
+- `GET /api/chunk/:x/:y/lineage` - Faction family trees with `inheritedFrom`-reconstructed inheritance chains (alive + dead NPCs)
 - `GET /api/journal` - Traveler's persistent action log with optional filters (`coordinate`, `npcId`, `itemId`, `fromYear`, `toYear`, `limit`)
 
 ### Action Endpoints
@@ -436,9 +438,9 @@ The implementation is production-ready, fully tested, and extensible for future 
 
 ---
 
-**Last Updated**: May 18, 2026  
+**Last Updated**: May 19, 2026  
 **Implementation Time**: Complete  
-**Test Status**: 374/374 passing ✅  
+**Test Status**: 399/399 passing ✅  
 **Build Status**: ✅ Ready to deploy
 
 ---
@@ -449,3 +451,6 @@ The implementation is production-ready, fully tested, and extensible for future 
 - **`districtType` added to map tiles**: `computeOwnership()` in `src/map.js` now computes `districtType` (same deterministic seed as `loadAsDistrict()`) for claimed tiles, and returns `null` for sovereign tiles. `DISTRICT_TYPES` constant moved from `index.js` to `src/map.js` as single source of truth.
 - **`claimedBy` now `null` for sovereign tiles**: Previously `computeOwnership()` set `claimedBy` to a tile's own coordinate when no external claimant reached it. Sovereign tiles now return `claimedBy: null`, `claimedByName: null`, `districtType: null`, so frontends can distinguish claimed territory from independent settlements without coordinate comparison.
 - **"Unknown" ruler on Districts fixed**: Districts were caching a stale `'Unknown'` mayor from a first visit before their parent was loaded, and `injectImmigrantsAndApplyDeltas()` was re-applying it on every subsequent load. Fix: (1) `unloadCoordinate()` no longer saves `currentMayor` for District entities; (2) `injectImmigrantsAndApplyDeltas()` skips `currentMayor` deltas for District entities — the authoritative value is always the parent's `currentMayor` delta, applied by `loadAsDistrict()`.
+- **Mystery Heist — duplicate `year: 0` history event fixed (bug-7a)**: `ArtifactEffects.applyWeaponEffect`, `applyTomeEffect`, and `applyJewelryEffect` were each pushing their own `career_shift` event directly onto the NPC without a `[Year X]` prefix, causing `makeEvent()` to default `year` to `0`. These redundant pushes have been removed; the `butterflyEvent` created in `turnInQuest()` is the single authoritative history event for all Weapon/Tome/Jewelry role changes. `ArtifactEffects.applyRelicEffect` retains its own events (affecting other town NPCs) but now receives `currentYear` and prefixes all descriptions with `[Year X]`.
+- **Mystery Heist — infinite quest loop fixed (bug-7b)**: `turnInQuest()` now (1) finds the matching Mystery Heist quest on the questGiver by `itemId`, (2) changes the questGiver's memory for the enemy from `MEMORY_STATES.HATES` to `MEMORY_STATES.SATISFIED` and persists it as a `memory_<enemyId>` delta, and (3) removes the quest from `offeredQuests`. On subsequent chunk loads, `generateQuests()` skips the `"hates"` branch for that enemy pair, preventing regeneration.
+- **Named constants for quest types and memory states**: Introduced `QUEST_TYPES` (exported from `src/quests.js`) and `MEMORY_STATES` (exported from `src/history.js`). All raw string comparisons and assignments for quest types (`"Mystery Heist"`, `"Bounty"`, `"Fetch"`) and memory states (`"hates"`, `"loves"`, `"likes"`, `"mourns"`, `"parent"`, `"child"`, `"avenged"`, `"satisfied"`) replaced with constants across `src/quests.js`, `src/actions.js`, `src/history.js`, and `src/dialogue.js`.

@@ -479,6 +479,14 @@ if (mythos.temporalExposure < 20) {
 - After 100 years with no visits, `temporalExposure` decreases by 50.
 - `temporalExposure` dropping below 20 disbands the Cult and nulls `activeLegend`.
 
+**Item 13 integration note** (Generational Bloodlines, already implemented):
+When generating a Cult faction from `temporalExposure > 50` (benevolent majority path), first
+check for living NPCs at the coordinate whose `ancestralMemories` contains
+`type: 'ancestral_reverence'`. If any exist, seed those NPCs as founding Cult members rather
+than creating a new faction from scratch. If a `Mystery Cult` Faction entity (spawned by item
+13's decade loop — `factionType: 'ancestral_reverence'`) already exists at the coordinate,
+set its `identity.id` as `mythos.cultFaction` rather than spawning a duplicate.
+
 ---
 
 ## 17. Artifact Seeding — /api/gift Endpoint & Heirloom Propagation
@@ -596,6 +604,15 @@ representative):
 - NPC with `ascension` ambition, agency 80, and a gifted Weapon → coup fires.
 - NPC with `legacy` ambition → descendant count triples; Famine risk check present.
 - NPC with `vengeance` ambition after ΔT = 51 → rival survival chance at 0; lineage wiped.
+
+**Item 13 integration note** (Generational Bloodlines, already implemented):
+Before applying the role-weighted ambition table, check the NPC's `ancestralMemories` array
+(added by item 13). The following overrides apply:
+- Any entry with `type: 'ancestral_shame'` → weight ambition 70% `ascension`, 30% `vengeance`
+  (overrides role default).
+- Any entry with `type: 'ancestral_mourning'` → force ambition to `content` (overrides all
+  other weights).
+- Any entry with `type: 'blood_feud'` → weight ambition 60% `vengeance`, 40% role default.
 
 ---
 

@@ -90,6 +90,28 @@ describe('Tier-aware population replenishment', () => {
             expect(['male', 'female', 'other']).toContain(npc.sex);
         });
     });
+
+    test('refugee arrival event is a structured migration object, not a plain string', () => {
+        const CURRENT_YEAR = 42;
+        const { world, town } = makeWorld(0, 0, 0, 1);
+        const before = Array.from(world.with('identity').where(e => e.identity.type === 'NPC')).map(n => n.identity.id);
+        replenishPopulationIfNeeded(world, 0, 0, seedrandom('refugee-event'), town, 'Plains', CURRENT_YEAR);
+        const newNpcs = Array.from(world.with('identity').where(
+            e => e.identity.type === 'NPC' && !before.includes(e.identity.id)
+        ));
+        expect(newNpcs.length).toBeGreaterThan(0);
+        newNpcs.forEach(npc => {
+            const firstEvent = npc.history.events[0];
+            expect(typeof firstEvent).toBe('object');
+            expect(firstEvent).toMatchObject({
+                id: expect.stringMatching(/^ev_/),
+                year: CURRENT_YEAR,
+                description: expect.stringContaining('Arrived as a refugee'),
+                type: 'migration',
+                causedBy: null
+            });
+        });
+    });
 });
 
 describe('PoliticalEngine.shouldDemote()', () => {

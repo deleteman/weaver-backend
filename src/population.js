@@ -3,6 +3,7 @@ const { Identity, Location, Inventory, Knowledge, Quests } = require('./componen
 const { generateText } = require('./grammar');
 const { assignRoleByBiome } = require('./biomes');
 const { log } = require('./logger');
+const { makeEvent } = require('./event-utils');
 const crypto = require('crypto');
 
 const SEX_MALE_THRESHOLD = 0.48;
@@ -40,7 +41,7 @@ function replenishPopulationIfNeeded(world, x, y, rng, townEntity, biome, curren
                 age: initialAge,
                 birthYear: currentYear - initialAge,
                 sex,
-                history: { events: [`[Year ${currentYear}] Arrived as a refugee seeking shelter.`] },
+                history: { events: [makeEvent(`[Year ${currentYear}] Arrived as a refugee seeking shelter.`, 'migration')] },
                 knowledge: Knowledge(),
                 inventory: Inventory(),
                 quests: Quests()

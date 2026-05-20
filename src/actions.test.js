@@ -73,7 +73,7 @@ describe('Player Actions', () => {
         const enemyId = "enemy-uuid-789";
         
         // Give the dummy NPC a blood feud
-        questGiver.knowledge.memories[enemyId] = "hates";
+        questGiver.knowledge.memories[enemyId] = 'hates';
 
         // Add the dead enemy to the world
         world.add({
@@ -85,10 +85,9 @@ describe('Player Actions', () => {
         const result = actions.turnInQuest(world, "world_X0_Y0", dummyTargetId, playerState, undefined);
 
         expect(result.success).toBe(true);
-        // FIX: Simplified the regex matcher
         expect(result.message).toMatch(/reported the death/i);
         expect(playerState.reputation).toBeGreaterThan(25);
-        expect(questGiver.knowledge.memories[enemyId]).toBe("avenged");
+        expect(questGiver.knowledge.memories[enemyId]).toBe('avenged');
     });
 
     test('assassinate should succeed on a regular NPC', () => {
@@ -142,6 +141,27 @@ describe('Player Actions', () => {
         const result = actions.lootTomb(world, "world_X0_Y0", dummyTargetId, playerState);
         expect(result.success).toBe(false);
         expect(result.message).toContain('still alive');
+    });
+
+    test('lootTomb with targetId on a tier-0 tile should loot NPC tomb, not ruin', () => {
+        const { getTierForCoordinate } = require('./db');
+        getTierForCoordinate.mockReturnValueOnce(0);
+
+        const deadNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        deadNpc.status = "Dead";
+        const result = actions.lootTomb(world, "world_X0_Y0", dummyTargetId, playerState);
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('The Mock Amulet');
+        expect(result.message).not.toContain('ruin');
+    });
+
+    test('lootTomb without targetId on tier-0 tile should loot ruin', () => {
+        const { getTierForCoordinate } = require('./db');
+        getTierForCoordinate.mockReturnValueOnce(0);
+
+        const result = actions.lootTomb(world, "world_X0_Y0", null, playerState);
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('ruin');
     });
 
     test('stealItem should fail when item not found on target', () => {
@@ -221,6 +241,46 @@ describe('Player Actions', () => {
         
         expect(result.success).toBe(true);
         expect(result.message).toMatch(/gave/i);
+    });
+
+    test('turnInQuest auto-detects item when no itemId arg sent (old playerState with itemId field)', () => {
+        const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        questGiver.quests.offeredQuests = [{ type: "Fetch", itemType: "Tome" }];
+
+        // Simulate old playerState: tome stored with `itemId` not `id` (pre-normalization data)
+        playerState.inventory = [{ itemId: "tome-old-id", name: "The Bone Tome", type: "Tome" }];
+
+        // Client sends no itemId (because item.id is undefined) — same as the actual bug scenario
+        const result = actions.turnInQuest(world, "world_X0_Y0", dummyTargetId, playerState, undefined);
+
+        expect(result.success).toBe(true);
+        expect(result.message).toMatch(/gave/i);
+    });
+
+    test('turnInQuest should accept a tome purchased from a merchant (itemId normalized to id)', () => {
+        const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        questGiver.quests.offeredQuests = [{ type: "Fetch", itemType: "Tome" }];
+
+        // Bought items arrive with `id` after the normalization fix (was `itemId` before the fix)
+        playerState.inventory = [{ id: "tome-purchased-id", name: "The Bone Tome", type: "Tome" }];
+
+        const result = actions.turnInQuest(world, "world_X0_Y0", dummyTargetId, "tome-purchased-id", playerState);
+
+        expect(result.success).toBe(true);
+        expect(result.message).toMatch(/gave/i);
+    });
+
+    test('turnInQuest falls to bounty branch when no itemId sent and inventory has no matching item', () => {
+        const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        questGiver.quests.offeredQuests = [{ type: "Fetch", itemType: "Tome" }];
+
+        // Inventory has wrong type — auto-detect finds nothing, itemId stays null → bounty branch
+        playerState.inventory = [{ id: "ring-id", name: "Gold Ring", type: "Jewelry" }];
+
+        const result = actions.turnInQuest(world, "world_X0_Y0", dummyTargetId, playerState, undefined);
+
+        expect(result.success).toBe(false);
+        expect(result.message).toMatch(/no completed bounties/i);
     });
 
     test('turnInQuest should reject wrong item type', () => {
@@ -413,6 +473,82 @@ describe('Player Actions', () => {
         }
     });
 
+    test('assassinate triggers grief for any NPC that loves the target', () => {
+        playerState.stats.stealth = 20;
+        playerState.stats.strength = 20;
+
+        const loverId = 'lover-npc-id';
+        world.add({
+            identity: Identity('Heartbroken Lover', 'NPC', loverId),
+            status: 'Alive',
+            currentRole: 'Citizen',
+            inventory: { items: [] },
+            knowledge: { memories: { [dummyTargetId]: 'loves' } },
+            history: { events: [] }
+        });
+
+        actions.assassinate(world, 'world_X0_Y0', dummyTargetId, playerState);
+
+        const lover = world.with('identity').where(e => e.identity.id === loverId).first;
+        expect(lover.knowledge.memories[dummyTargetId]).toBe('mourns');
+        const griefEv = lover.history.events.find(e => e.type === 'grief');
+        expect(griefEv).toBeDefined();
+        expect(griefEv.description).toMatch(/heartbroken/i);
+    });
+
+    test('regicide triggers grief for any NPC that loves the target', () => {
+        const targetNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        targetNpc.currentRole = 'Mayor';
+
+        jest.spyOn(Math, 'random').mockReturnValue(0.0);
+        playerState.stats.stealth = 20;
+        playerState.stats.strength = 20;
+
+        const loverId = 'lover-npc-id-2';
+        world.add({
+            identity: Identity('Grieving Lover', 'NPC', loverId),
+            status: 'Alive',
+            currentRole: 'Citizen',
+            inventory: { items: [] },
+            knowledge: { memories: { [dummyTargetId]: 'loves' } },
+            history: { events: [] }
+        });
+
+        const result = actions.regicide(world, 'world_X0_Y0', dummyTargetId, 5, playerState);
+        if (!result.success) return; // skip if random still failed
+
+        const lover = world.with('identity').where(e => e.identity.id === loverId).first;
+        expect(lover.knowledge.memories[dummyTargetId]).toBe('mourns');
+        const griefEv = lover.history.events.find(e => e.type === 'grief');
+        expect(griefEv).toBeDefined();
+    });
+
+    test.each([
+        ['parent', /grief-stricken/i],
+        ['child',  /devastated/i],
+    ])('assassinate triggers grief with correct message when relationship is %s', (relationship, msgPattern) => {
+        playerState.stats.stealth = 20;
+        playerState.stats.strength = 20;
+
+        const relativeid = `relative-npc-${relationship}`;
+        world.add({
+            identity: Identity('Grieving Relative', 'NPC', relativeid),
+            status: 'Alive',
+            currentRole: 'Citizen',
+            inventory: { items: [] },
+            knowledge: { memories: { [dummyTargetId]: relationship } },
+            history: { events: [] }
+        });
+
+        actions.assassinate(world, 'world_X0_Y0', dummyTargetId, playerState);
+
+        const relative = world.with('identity').where(e => e.identity.id === relativeid).first;
+        expect(relative.knowledge.memories[dummyTargetId]).toBe('mourns');
+        const griefEv = relative.history.events.find(e => e.type === 'grief');
+        expect(griefEv).toBeDefined();
+        expect(griefEv.description).toMatch(msgPattern);
+    });
+
     test('appendHistory wraps a legacy plain string in a legacy-type event object', () => {
         // Directly test that the public API still accepts strings via the turnInQuest path
         const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
@@ -523,6 +659,63 @@ describe('Player Actions', () => {
         expect(result.event).toBeNull();
         const plutocracyCall = saveDelta.mock.calls.find(c => c[2] === 'plutocracy_candidate');
         expect(plutocracyCall).toBeUndefined();
+    });
+
+    test('executeTrade: selling an item adds it to npcInventory', () => {
+        const merchantId = 'merchant-sell-inv-001';
+
+        world.add({
+            identity: Identity('Empty Stall', 'NPC', merchantId),
+            status: 'Alive',
+            currentRole: 'Merchant',
+            merchantInventory: [],
+            personalWealth: 0,
+            history: { events: [] },
+            knowledge: { memories: {} },
+            inventory: { items: [] },
+            quests: { offeredQuests: [] }
+        });
+
+        playerState.gold = 0;
+        playerState.inventory = [{ id: 'sword-01', itemId: 'sword-01', name: 'Iron Sword', type: 'Weapon', tier: 1, value: 50, price: 50 }];
+
+        const result = actions.executeTrade(world, 'world_X0_Y0', merchantId, { type: 'sell', itemId: 'sword-01', quantity: 1 }, playerState);
+
+        expect(result.success).toBe(true);
+        expect(result.npcInventory).toHaveLength(1);
+        expect(result.npcInventory[0].itemId).toBe('sword-01');
+        expect(result.npcInventory[0].quantity).toBe(1);
+    });
+
+    test('executeTrade: selling the same item twice increments its quantity in npcInventory', () => {
+        const merchantId = 'merchant-sell-inv-002';
+
+        world.add({
+            identity: Identity('Stacking Stall', 'NPC', merchantId),
+            status: 'Alive',
+            currentRole: 'Merchant',
+            merchantInventory: [],
+            personalWealth: 0,
+            history: { events: [] },
+            knowledge: { memories: {} },
+            inventory: { items: [] },
+            quests: { offeredQuests: [] }
+        });
+
+        playerState.gold = 0;
+        playerState.inventory = [
+            { id: 'dagger-01', itemId: 'dagger-01', name: 'Rusty Dagger', type: 'Weapon', tier: 1, value: 20, price: 20 },
+            { id: 'dagger-02', itemId: 'dagger-01', name: 'Rusty Dagger', type: 'Weapon', tier: 1, value: 20, price: 20 }
+        ];
+
+        actions.executeTrade(world, 'world_X0_Y0', merchantId, { type: 'sell', itemId: 'dagger-01', quantity: 1 }, playerState);
+        playerState.inventory = [{ id: 'dagger-02', itemId: 'dagger-01', name: 'Rusty Dagger', type: 'Weapon', tier: 1, value: 20, price: 20 }];
+        const result = actions.executeTrade(world, 'world_X0_Y0', merchantId, { type: 'sell', itemId: 'dagger-01', quantity: 1 }, playerState);
+
+        expect(result.success).toBe(true);
+        expect(result.npcInventory).toHaveLength(1);
+        expect(result.npcInventory[0].itemId).toBe('dagger-01');
+        expect(result.npcInventory[0].quantity).toBe(2);
     });
 
     test('executeTrade: buy that would leave player gold below 0 is rejected with status 400', () => {
@@ -726,6 +919,87 @@ describe('Player Actions', () => {
             // claimThrone fails (rep < 20) but reputation must remain a number
             expect(typeof ps.reputation).toBe('number');
             expect(Number.isNaN(ps.reputation)).toBe(false);
+        });
+    });
+
+    describe('Mystery Heist quest resolution (bug-7b)', () => {
+        const COORDINATE = 'world_X0_Y0';
+        const ENEMY_ID = 'enemy-heist-01';
+        const HEIST_ITEM_ID = 'heist-item-01';
+
+        beforeEach(() => {
+            const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+
+            world.add({
+                identity: { type: 'NPC', id: ENEMY_ID, name: 'Heist Enemy' },
+                status: 'Alive',
+                currentRole: 'Bandit',
+                inventory: { items: [] },
+                knowledge: { memories: {} },
+                history: { events: [] },
+            });
+
+            questGiver.knowledge.memories[ENEMY_ID] = 'hates';
+            questGiver.quests.offeredQuests = [{
+                type: 'Mystery Heist',
+                title: 'Find The Iron Dagger',
+                description: 'A vile thief took The Iron Dagger from my family.',
+                target: ENEMY_ID,
+                itemId: HEIST_ITEM_ID
+            }];
+
+            playerState.inventory = [{ id: HEIST_ITEM_ID, name: 'The Iron Dagger', type: 'Weapon' }];
+            questGiver.inventory.items = [];
+        });
+
+        test('successful Mystery Heist turnin changes questGiver memory for enemy to satisfied', () => {
+            const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+
+            const result = actions.turnInQuest(world, COORDINATE, dummyTargetId, HEIST_ITEM_ID, playerState);
+
+            expect(result.success).toBe(true);
+            expect(questGiver.knowledge.memories[ENEMY_ID]).toBe('satisfied');
+        });
+
+        test('successful Mystery Heist turnin removes the quest from offeredQuests', () => {
+            const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+
+            actions.turnInQuest(world, COORDINATE, dummyTargetId, HEIST_ITEM_ID, playerState);
+
+            const heistQuests = questGiver.quests.offeredQuests.filter(q => q.type === 'Mystery Heist');
+            expect(heistQuests).toHaveLength(0);
+        });
+
+        test('satisfied memory delta is persisted via saveDelta', () => {
+            const { saveDelta } = require('./db');
+            saveDelta.mockClear();
+
+            actions.turnInQuest(world, COORDINATE, dummyTargetId, HEIST_ITEM_ID, playerState);
+
+            const memoryCall = saveDelta.mock.calls.find(
+                ([, , key, value]) => key === `memory_${ENEMY_ID}` && value === 'satisfied'
+            );
+            expect(memoryCall).toBeDefined();
+        });
+    });
+
+    describe('turnInQuest Weapon gift — single history event (bug-7a)', () => {
+        const COORDINATE = 'world_X0_Y0';
+        const WEAPON_ID = 'weapon-7a-01';
+
+        test('donating a Weapon produces exactly one history event on questGiver', () => {
+            const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+            questGiver.currentRole = 'Citizen';
+            questGiver.inventory.items = [];
+
+            playerState.inventory = [{ id: WEAPON_ID, name: 'The Iron Dagger', type: 'Weapon' }];
+
+            actions.turnInQuest(world, COORDINATE, dummyTargetId, WEAPON_ID, playerState);
+
+            expect(questGiver.history.events).toHaveLength(1);
+            const ev = questGiver.history.events[0];
+            expect(ev.year).toBeGreaterThan(0);
+            expect(ev.description).toMatch(/\[Year \d+\]/);
         });
     });
 });

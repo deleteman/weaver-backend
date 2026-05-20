@@ -7,7 +7,8 @@ jest.mock('./db', () => ({
     saveDelta: jest.fn(),
     upsertDelta: jest.fn(),
     getTierForCoordinate: jest.fn(() => 0),
-    getCapsuleDeltas: jest.fn(() => [])
+    getCapsuleDeltas: jest.fn(() => []),
+    getDeltas: jest.fn(() => [])
 }));
 
 describe('History Simulation', () => {
@@ -196,6 +197,42 @@ describe('History Simulation', () => {
         // The heartbreak event should have been recorded
         const npc1Updated = world.with('identity').where(e => e.identity.id === 'test-npc').first;
         expect(npc1Updated.knowledge.memories['dead-partner']).toBe('mourns');
+    });
+
+    test.each([
+        ['assassination', 'assassination'],
+        ['regicide', 'regicide'],
+        ['child_death', 'child_death'],
+    ])('simulateHistory should trigger mourning when loved NPC died via %s event', (label, eventType) => {
+        const npc1 = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+
+        world.add({
+            identity: { type: 'NPC', id: 'slain-partner', name: 'Slain Partner' },
+            location: { x: 0, y: 0 },
+            status: 'Dead',
+            currentRole: 'Citizen',
+            age: 30,
+            history: { events: [{ type: eventType, description: `[Year 1] Died via ${label}.` }] },
+            knowledge: { memories: {} },
+            inventory: { items: [] },
+            description: 'A slain partner.'
+        });
+
+        npc1.knowledge.memories['slain-partner'] = 'loves';
+
+        let callCount = 0;
+        const testRng = () => {
+            callCount++;
+            if (callCount === 1) return 0.2;
+            return 0.5;
+        };
+
+        simulateHistory(world, testRng, 0, 0, 1);
+
+        const npc1Updated = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        expect(npc1Updated.knowledge.memories['slain-partner']).toBe('mourns');
+        const griefEvent = npc1Updated.history.events.find(e => e.type === 'grief');
+        expect(griefEvent).toBeDefined();
     });
 
     test('simulateHistory should trigger social events when eventRoll is between 0.18-0.33', () => {
@@ -813,6 +850,350 @@ describe('History Simulation', () => {
             children.forEach(child => {
                 expect(['male', 'female', 'other']).toContain(child.sex);
             });
+        });
+    });
+
+    function makeRng(values) {
+        let i = 0;
+        return () => (i < values.length ? values[i++] : 0.5);
+    }
+
+    describe('Merchant career lifecycle', () => {
+        function addMerchantNpc(w, id, opts = {}) {
+            w.add({
+                identity: { type: 'NPC', id, name: `Merchant ${id}` },
+                location: { x: 0, y: 0 },
+                status: 'Alive',
+                currentRole: 'Merchant',
+                age: 30,
+                merchantInventory: opts.merchantInventory ?? [],
+                personalWealth: opts.personalWealth ?? 1000,
+                history: { events: [] },
+                knowledge: { memories: opts.memories ?? {} },
+                inventory: { items: [] },
+                description: 'A test merchant'
+            });
+        }
+
+        test('career_shift to Merchant initializes merchantInventory and personalWealth', () => {
+            // test-npc (Citizen) is the only NPC; it shifts to Merchant
+            // RNG: [no-immigration(0.5), career_shift(0.14), pick-Merchant(0.58), rest...]
+            rng = makeRng([0.5, 0.14, 0.58]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+            expect(npc.currentRole).toBe('Merchant');
+            expect(Array.isArray(npc.merchantInventory)).toBe(true);
+            expect(npc.merchantInventory.length).toBeGreaterThan(0);
+            expect(npc.personalWealth).toBeGreaterThanOrEqual(500);
+        });
+
+        test('career_shift away from Merchant: Relics stay in personal inventory', () => {
+            addMerchantNpc(world, 'merchant-relic', {
+                merchantInventory: [{ itemId: 'relic-sword', name: 'Blade of Ancients', type: 'Weapon', prefix: 'Relic', value: 800, tier: 2, quantity: 1, price: 640 }]
+            });
+            // RNG: [no-immigration(0.5), test-npc no-event(0.5), merchant career_shift(0.14), pick Beggar(0.01)]
+            rng = makeRng([0.5, 0.5, 0.14, 0.01]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const merchant = world.with('identity').where(e => e.identity.id === 'merchant-relic').first;
+            expect(merchant.currentRole).toBe('Beggar');
+            expect(merchant.merchantInventory).toHaveLength(0);
+            expect(merchant.inventory.items.some(i => i.itemId === 'relic-sword')).toBe(true);
+        });
+
+        test('career_shift away from Merchant: regular stock goes to loved ones first with inheritance event', () => {
+            // test-npc is the loved one; merchant-loved ships stock to them
+            addMerchantNpc(world, 'merchant-loved', {
+                merchantInventory: [{ itemId: 'grain-01', name: 'Grain', type: 'resource', tier: 1, quantity: 5, price: 80, value: 80 }],
+                memories: { 'test-npc': 'loves' }
+            });
+            // RNG: [no-immigration(0.5), test-npc no-event(0.5), merchant career_shift(0.14), pick Beggar(0.01)]
+            rng = makeRng([0.5, 0.5, 0.14, 0.01]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const merchant = world.with('identity').where(e => e.identity.id === 'merchant-loved').first;
+            const recipient = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+
+            expect(merchant.merchantInventory).toHaveLength(0);
+            expect(recipient.inventory.items.some(i => i.itemId === 'grain-01')).toBe(true);
+            const inheritEvent = recipient.history.events.find(e => e.type === 'inheritance');
+            expect(inheritEvent).toBeDefined();
+            expect(inheritEvent.causedBy).not.toBeNull();
+            expect(inheritEvent.causedBy.type).toBe('career_shift');
+        });
+
+        test('career_shift away from Merchant: falls back to other merchant with inheritance event when no social recipients', () => {
+            addMerchantNpc(world, 'merchant-from', {
+                merchantInventory: [{ itemId: 'cloth-01', name: 'Cloth', type: 'resource', tier: 1, quantity: 3, price: 50, value: 50 }]
+            });
+            addMerchantNpc(world, 'merchant-to', { merchantInventory: [] });
+
+            // RNG: [no-immigration(0.5), test-npc(0.5), merchant-from career_shift(0.14), pick Beggar(0.01), pick recipient(0.5)]
+            rng = makeRng([0.5, 0.5, 0.14, 0.01, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const from = world.with('identity').where(e => e.identity.id === 'merchant-from').first;
+            const to = world.with('identity').where(e => e.identity.id === 'merchant-to').first;
+
+            expect(from.merchantInventory).toHaveLength(0);
+            expect(to.merchantInventory.some(s => s.itemId === 'cloth-01')).toBe(true);
+            const inheritEvent = to.history.events.find(e => e.type === 'inheritance');
+            expect(inheritEvent).toBeDefined();
+            expect(inheritEvent.causedBy).not.toBeNull();
+            expect(inheritEvent.causedBy.type).toBe('career_shift');
+        });
+
+        test('career_shift away from Merchant: each slot distributed to other merchants gets a distinct event ID', () => {
+            addMerchantNpc(world, 'merchant-from', {
+                merchantInventory: [
+                    { itemId: 'grain-01', name: 'Grain',  type: 'resource', tier: 1, quantity: 5, price: 80, value: 80 },
+                    { itemId: 'cloth-01', name: 'Cloth',  type: 'resource', tier: 1, quantity: 3, price: 50, value: 50 },
+                    { itemId: 'iron-01',  name: 'Iron',   type: 'resource', tier: 1, quantity: 2, price: 60, value: 60 },
+                ]
+            });
+            addMerchantNpc(world, 'merchant-to', { merchantInventory: [] });
+            // RNG: [no-immigration(0.5), test-npc(0.5), merchant-from career_shift(0.14), pick Beggar(0.01),
+            //       pick recipient×3(0.5, 0.5, 0.5), merchant-to no-event(0.5)]
+            rng = makeRng([0.5, 0.5, 0.14, 0.01, 0.5, 0.5, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const recipient = world.with('identity').where(e => e.identity.id === 'merchant-to').first;
+            const inheritEvents = recipient.history.events.filter(e => e.type === 'inheritance');
+            expect(inheritEvents).toHaveLength(3);
+            const ids = inheritEvents.map(e => e.id);
+            expect(new Set(ids).size).toBe(3);
+        });
+
+        test('career_shift away from Merchant: stock is lost when no recipients exist', () => {
+            addMerchantNpc(world, 'merchant-alone', {
+                merchantInventory: [{ itemId: 'wood-01', name: 'Wood', type: 'resource', tier: 1, quantity: 4, price: 30, value: 30 }]
+            });
+            // RNG: [no-immigration(0.5), test-npc(0.5), merchant career_shift(0.14), pick Beggar(0.01)]
+            rng = makeRng([0.5, 0.5, 0.14, 0.01]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const merchant = world.with('identity').where(e => e.identity.id === 'merchant-alone').first;
+            expect(merchant.merchantInventory).toHaveLength(0);
+        });
+    });
+
+    describe('Generational Bloodlines — Memory Inheritance & Faction Spawning', () => {
+        function addNpcWithMemory(world, id, memories = [], ancestralMemories = [], extra = {}) {
+            return world.add({
+                identity: { type: 'NPC', id, name: `NPC ${id}` },
+                location: { x: 0, y: 0 },
+                status: 'Alive',
+                currentRole: 'Citizen',
+                age: 30,
+                birthYear: 1,
+                sex: 'male',
+                description: 'A test NPC',
+                history: { events: [] },
+                knowledge: { memories: {} },
+                inventory: { items: [] },
+                quests: { offeredQuests: [] },
+                memories,
+                ancestralMemories,
+                ...extra,
+            });
+        }
+
+        test('hate memory with intensity 9 propagates to child as blood_feud on death', () => {
+            const parent = addNpcWithMemory(world, 'parent-npc',
+                [{ type: 'hate', targetId: 'rival-id', intensity: 9, year: 1 }]
+            );
+            const child = addNpcWithMemory(world, 'child-npc');
+            parent.knowledge.memories['child-npc'] = 'child';
+            child.knowledge.memories['parent-npc'] = 'parent';
+
+            // RNG: immigration(0.5=no), test-npc roll(0.5=nothing), parent roll(0.09=death), death-cause pick(0.5), child roll(0.5)
+            rng = makeRng([0.5, 0.5, 0.09, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            expect(parent.status).toBe('Dead');
+            const feud = child.ancestralMemories.find(am => am.type === 'blood_feud');
+            expect(feud).toBeDefined();
+            expect(feud.targetLineage).toBe('rival-id');
+            expect(feud.inheritedFrom.npcId).toBe('parent-npc');
+        });
+
+        test('memory with intensity below threshold (< 7) is NOT propagated', () => {
+            const parent = addNpcWithMemory(world, 'parent-low',
+                [{ type: 'hate', targetId: 'rival-id', intensity: 5, year: 1 }]
+            );
+            const child = addNpcWithMemory(world, 'child-low');
+            parent.knowledge.memories['child-low'] = 'child';
+
+            rng = makeRng([0.5, 0.5, 0.09, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            expect(parent.status).toBe('Dead');
+            expect(child.ancestralMemories).toHaveLength(0);
+        });
+
+        test('debt memory with intensity 8 propagates to child as ancestral_debt', () => {
+            const parent = addNpcWithMemory(world, 'debtor-parent',
+                [{ type: 'debt', targetId: 'creditor-id', intensity: 8, year: 1 }]
+            );
+            const child = addNpcWithMemory(world, 'debtor-child');
+            parent.knowledge.memories['debtor-child'] = 'child';
+
+            rng = makeRng([0.5, 0.5, 0.09, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const am = child.ancestralMemories.find(am => am.type === 'ancestral_debt');
+            expect(am).toBeDefined();
+            expect(am.targetLineage).toBe('creditor-id');
+        });
+
+        test('shame memory with intensity 9 propagates to child as ancestral_shame', () => {
+            const parent = addNpcWithMemory(world, 'shamed-parent',
+                [{ type: 'shame', targetId: 'banisher-id', intensity: 9, year: 1 }]
+            );
+            const child = addNpcWithMemory(world, 'shamed-child');
+            parent.knowledge.memories['shamed-child'] = 'child';
+
+            rng = makeRng([0.5, 0.5, 0.09, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const am = child.ancestralMemories.find(am => am.type === 'ancestral_shame');
+            expect(am).toBeDefined();
+        });
+
+        test('reverence memory with intensity 8 propagates to child as ancestral_reverence', () => {
+            const parent = addNpcWithMemory(world, 'reverent-parent',
+                [{ type: 'reverence', targetId: 'tome-id', intensity: 8, year: 1 }]
+            );
+            const child = addNpcWithMemory(world, 'reverent-child');
+            parent.knowledge.memories['reverent-child'] = 'child';
+
+            rng = makeRng([0.5, 0.5, 0.09, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const am = child.ancestralMemories.find(am => am.type === 'ancestral_reverence');
+            expect(am).toBeDefined();
+        });
+
+        test('grief memory with intensity 7 propagates to child as ancestral_mourning', () => {
+            const parent = addNpcWithMemory(world, 'grieving-parent',
+                [{ type: 'grief', targetId: 'lost-one-id', intensity: 7, year: 1 }]
+            );
+            const child = addNpcWithMemory(world, 'mourning-child');
+            parent.knowledge.memories['mourning-child'] = 'child';
+
+            rng = makeRng([0.5, 0.5, 0.09, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const am = child.ancestralMemories.find(am => am.type === 'ancestral_mourning');
+            expect(am).toBeDefined();
+        });
+
+        test('intensity is halved when propagated to heir', () => {
+            const parent = addNpcWithMemory(world, 'parent-halved',
+                [{ type: 'hate', targetId: 'rival-id', intensity: 8, year: 1 }]
+            );
+            const child = addNpcWithMemory(world, 'child-halved');
+            parent.knowledge.memories['child-halved'] = 'child';
+
+            rng = makeRng([0.5, 0.5, 0.09, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            const feud = child.ancestralMemories.find(am => am.type === 'blood_feud');
+            expect(feud.intensity).toBe(4); // 8 / 2
+        });
+
+        function addEconomicsTownFields(townEntity) {
+            townEntity.political = { tier: 1, demographics: {}, stance: 'Balanced' };
+            townEntity.population = 5;
+            townEntity.regionalWealth = 1000;
+            townEntity.primaryExport = 'Grain';
+            townEntity.tradePartners = [];
+            townEntity.history = { events: [] };
+            townEntity.economicModifiers = { shortage: false, hyperinflation: false, hyperinflationExpiryYear: null, economicBoomYear: null };
+        }
+
+        const feudAm = (targetLineage) => ({ type: 'blood_feud', targetLineage, intensity: 4, originYear: 1, originEvent: 'test', inheritedFrom: null });
+
+        test('3 NPCs with blood_feud older than 50 years spawn a Faction entity', () => {
+            const town = world.with('identity', 'currentMayor').where(e => e.identity.type === 'Town').first;
+            addEconomicsTownFields(town);
+            // Pre-seed 3 NPCs with blood_feud ancestralMemories that have been active 60 years
+            addNpcWithMemory(world, 'npc-feud-1', [], [feudAm('rival-lineage')]);
+            addNpcWithMemory(world, 'npc-feud-2', [], [feudAm('rival-lineage')]);
+            addNpcWithMemory(world, 'npc-feud-3', [], [feudAm('rival-lineage')]);
+
+            // startYear=60: feud is 59 years old (60-1=59) > ANCESTRAL_BOND_MIN_YEARS(50) → spawn
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 60);
+
+            const factions = Array.from(world.with('identity').where(e => e.identity.type === 'Faction'));
+            expect(factions.length).toBeGreaterThanOrEqual(1);
+        });
+
+        test('fewer than 3 NPCs sharing a blood_feud do NOT spawn a Faction', () => {
+            const town = world.with('identity', 'currentMayor').where(e => e.identity.type === 'Town').first;
+            addEconomicsTownFields(town);
+            addNpcWithMemory(world, 'npc-solo-1', [], [feudAm('rival-solo')]);
+            addNpcWithMemory(world, 'npc-solo-2', [], [feudAm('rival-solo')]);
+
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 60);
+
+            const factions = Array.from(world.with('identity').where(e => e.identity.type === 'Faction'));
+            expect(factions).toHaveLength(0);
+        });
+
+        test('faction name is deterministic for the same lineage seed', () => {
+            const town = world.with('identity', 'currentMayor').where(e => e.identity.type === 'Town').first;
+            addEconomicsTownFields(town);
+            for (let i = 0; i < 3; i++) {
+                addNpcWithMemory(world, `npc-det-${i}`, [], [feudAm('det-lineage')]);
+            }
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 60);
+            const firstRun = Array.from(world.with('identity').where(e => e.identity.type === 'Faction'));
+            const firstName = firstRun[0]?.identity.name;
+
+            // Reset world and repeat with identical setup
+            const world2 = new World();
+            const town2 = world2.add({ identity: { type: 'Town', id: 'town-id', name: 'Test Town' }, location: { x: 0, y: 0 }, currentMayor: null });
+            addEconomicsTownFields(town2);
+            for (let i = 0; i < 3; i++) {
+                world2.add({
+                    identity: { type: 'NPC', id: `npc-det2-${i}`, name: `NPC det2-${i}` },
+                    location: { x: 0, y: 0 }, status: 'Alive', currentRole: 'Citizen', age: 30,
+                    birthYear: 1, sex: 'male', description: 'A test NPC', history: { events: [] },
+                    knowledge: { memories: {} }, inventory: { items: [] }, quests: { offeredQuests: [] },
+                    memories: [], ancestralMemories: [feudAm('det-lineage')],
+                });
+            }
+            const rng2 = makeRng(Array(200).fill(0.5));
+            simulateHistory(world2, rng2, 0, 0, 10, 60);
+            const secondRun = Array.from(world2.with('identity').where(e => e.identity.type === 'Faction'));
+            const secondName = secondRun[0]?.identity.name;
+
+            expect(firstName).toBeDefined();
+            expect(firstName).toBe(secondName);
+        });
+
+        test('ancestral_mourning suppresses economic boom when 3+ mourning NPCs present', () => {
+            const town = world.with('identity', 'currentMayor').where(e => e.identity.type === 'Town').first;
+            addEconomicsTownFields(town);
+            town.economicModifiers.economicBoomYear = 45; // boom was set before simulation
+
+            for (let i = 0; i < 3; i++) {
+                addNpcWithMemory(world, `mourner-${i}`, [], [{
+                    type: 'ancestral_mourning', targetLineage: 'loss-id', intensity: 3,
+                    originYear: 1, originEvent: 'test', inheritedFrom: null
+                }]);
+            }
+
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 50);
+
+            // economicBoomYear should have been nulled by mourning suppression
+            expect(town.economicModifiers.economicBoomYear).toBeNull();
         });
     });
 });

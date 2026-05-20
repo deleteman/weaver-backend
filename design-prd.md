@@ -44,7 +44,7 @@ The engine utilizes `miniplex`. Every actor, town, and child is an entity compos
 | `Identity` | `name`, `type`, `id` (UUID) | Defines the entity. UUIDs are deterministic hashes of the seed, year, and name. | 
 | `Location` | `tiles` (array), `parent_id` | Array of X/Y pairs supporting multi-tile cities. | 
 | `History` | `events` (array of event objects) | Chronological logs. Each event: `{ id, year, description, type, causedBy }`. `id` is `"ev_"` + 8-char SHA-1 hash of description. `type` is a machine-readable slug (e.g. `"death"`, `"power_seizure"`). `causedBy` links to the `id` of a causal event or `null`. Old plain-string deltas are auto-wrapped as `type: "legacy"` on read. | 
-| `Knowledge` | `memories` (dict) | Maps NPC UUIDs to statuses (`loves`, `hates`, `avenged`). | 
+| `Knowledge` | `memories` (dict) | Maps NPC UUIDs to statuses (`loves`, `likes`, `hates`, `mourns`, `parent`, `child`, `avenged`, `satisfied`). `satisfied` is set when a Mystery Heist quest is successfully turned in, preventing the quest from regenerating. | 
 | `Inventory` | `items` (array of objects) | Rich Artifact objects with their own UUIDs and lore. Each item carries: `id`, `name`, `type` (`Tome`/`Jewelry`/`Weapon`/`Relic`), `description`, `content` (Tomes only), `creationYear`, `originSettlement` (coordinate key), `historicalSignificance` (string array), `baseValue` (deterministic gold value seeded by type), and `value` (age-adjusted; use `calculateItemValue(item, globalYear)` from `src/items.js` to compute). `prefix` (`'Ancient'` or `'Relic'`) is added by `calculateItemValue` for items older than 100 or 300 years respectively. | 
 | `Status` | `state` (enum) | `Alive`, `Dead`, `Migrated`, `Exiled`. | 
 | `Political` | `tier` (int), `demographics` | Tracks settlement size (1-5) and dominant traits (e.g., "Scholar Heavy"). | 
@@ -385,4 +385,128 @@ No ECS Instantiation: The engine bypasses Miniplex entirely.
 ```
 
 `claimedBy` and `claimedByName` are `null` for sovereign tiles (no external claimant). `districtType` is `null` for sovereign tiles and one of `Market`, `Slums`, `Keep`, `Barracks`, `Temple` for district tiles.
+
+## 9. The Traveler's Journal — Persistent Action Log
+
+Every player action and world visit is appended to a dedicated `journal` SQLite table, giving the Traveler a browsable, filterable history of everything they have ever done.
+
+### 9.1. Storage Schema
+
+The `journal` table is append-only and lives alongside the `world_deltas` table in `world_deltas.db`. It is **never** mutated after insert — entries are a permanent narrative record.
+
+```sql
+CREATE TABLE IF NOT EXISTS journal (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  year      INTEGER NOT NULL,
+  action    TEXT    NOT NULL,
+  coordinate TEXT,
+  npc_id    TEXT,
+  item_id   TEXT,
+  summary   TEXT,
+  detail    TEXT    -- JSON blob for action-specific structured data
+);
+```
+
+Indexes on `coordinate`, `npc_id`, and `year` ensure filtering remains fast even across thousands of entries.
+
+### 9.2. When Entries Are Written
+
+An entry is appended on **success** for every interaction that changes world or player state:
+
+| Trigger | `action` value |
+|---|---|
+| `GET /api/chunk/:x/:y` (any successful load) | `visit` |
+| `POST /api/action/steal` | `steal` |
+| `POST /api/action/assassinate` | `assassinate` |
+| `POST /api/action/turnin` (fetch & bounty paths) | `turnin` |
+| `POST /api/trade` (buy & sell) | `trade` |
+| `POST /api/action/loot_tomb` (ruin & dead-NPC) | `loot_tomb` |
+| `POST /api/action/claim` | `claim` |
+| `POST /api/action/tax` | `tax` |
+| `POST /api/action/decree` | `decree` |
+| `POST /api/action/banish` | `banish` |
+| `POST /api/action/abdicate` | `abdicate` |
+| `POST /api/action/regicide` | `regicide` |
+| `POST /api/action/advance_time` | `advance_time` |
+
+Reserved action values (`gift`, `talk`, `bury_capsule`) are defined in the schema now so future items can write entries without a migration.
+
+### 9.3. Query Endpoint
+
+`GET /api/journal` returns entries in ascending year order and supports all of the following optional filters:
+
+| Param | Description |
+|---|---|
+| `coordinate` | Restrict to one settlement key (e.g. `world_X2_Y3`) |
+| `npcId` | All entries referencing a specific NPC |
+| `itemId` | All entries involving a specific item |
+| `fromYear` | Lower bound (inclusive) on year |
+| `toYear` | Upper bound (inclusive) on year |
+| `limit` | Max entries returned (default 100, max 500) |
+
+The response includes `total` — the unfiltered match count, unaffected by `limit` — so clients can implement pagination without a second query.
+
+`settlementName` and `npcName` are surfaced from the `detail` JSON blob at the top level of each entry for convenience. The full `detail` object is also returned for action-specific fields (`xpGained`, `goldFound`, `qty`, `price`, etc.).
+
+### 9.4. Design Constraints
+
+- Journal writes are **fire-and-forget within the same synchronous transaction** as the action — they must not block or fail the action response.
+- `detail` is a freeform JSON blob; its shape varies by `action` type and is documented in `API-REFERENCE.md`.
+- The journal is **read-only from the API** — there is no delete or edit endpoint. Corrections to erroneous entries are out of scope.
+
+## 10. Generational Bloodlines — Memory Inheritance & Faction Spawning
+
+NPCs accumulate structured emotional memories during their lives. When an NPC dies, any qualifying memory (intensity ≥ 7) is propagated to a living heir. Over time, shared ancestral memories coalesce into named Faction entities.
+
+### 10.1. Memory Component
+
+Every NPC carries a `Memory` component with two arrays:
+
+- **`memories`** — structured source memories seeded from live social events:
+  - `{ type: 'love'|'hate'|'debt'|'shame'|'reverence'|'grief', targetId, intensity: 1–10, year }`
+- **`ancestralMemories`** — inherited bonds passed down through generations:
+  - `{ type, targetLineage, intensity, originYear, originEvent, inheritedFrom: { npcId, npcName, year } }`
+
+`inheritedFrom` is a single pointer to the immediate predecessor — not a full embedded chain. Full inheritance chains are reconstructed at query time by the `/lineage` endpoint.
+
+**Memory seeding from social events:**
+
+| Event | Memory pushed |
+|---|---|
+| Romance (marriage) | `{ type: 'love', intensity: 9 }` on both partners |
+| Rivalry | `{ type: 'hate', intensity: 8 }` on both NPCs |
+| Spouse death | `{ type: 'grief', intensity: 7 }` on surviving partner |
+| Relic/Tome discovery | `{ type: 'reverence', intensity: 8 }` on discovering NPC |
+
+### 10.2. Propagation Rules
+
+`propagate_memories()` is called just before each NPC death (child and adult). Any memory with `intensity >= HIGH_INTENSITY_THRESHOLD (7)` is propagated to an heir, in priority order:
+
+1. A direct child NPC (alive)
+2. A grandchild (via child's `knowledge.memories`)
+3. A same-location ally (`knowledge.memories === 'likes'`)
+
+Inherited intensity is halved (`Math.floor(intensity / INHERITED_INTENSITY_DIVISOR)`).
+
+### 10.3. Memory Types & Long-Term Factions
+
+| Source memory | Propagates as | 50+ yr faction | 100+ yr faction |
+|---|---|---|---|
+| `hate` | `blood_feud` | **Named House** — vendetta against targetLineage | — |
+| `love` | `ancestral_ally` | **Allied Bloodline** — passive diplomacy bonus | — |
+| `debt` | `ancestral_debt` | — | **Debtor House** — periodic gold tribute |
+| `shame` | `ancestral_shame` | — | **Redemption Brotherhood** — `ascension`/`vengeance` ambition bias |
+| `reverence` | `ancestral_reverence` | — | **Mystery Cult** — `Scholar`/`Cultist` role bias (hooks item 14) |
+| `grief` | `ancestral_mourning` | — | **Memorial Order** — `content` ambition override; suppresses economic boom |
+
+**Faction spawn conditions:** 3+ NPCs at the same settlement with the same `ancestralMemory` type pointing to the same `targetLineage`, persisted for ≥ 50 years (`blood_feud`/`ancestral_ally`) or ≥ 100 years (all others). Faction names are deterministically generated via `seedrandom(faction_${type}_${targetLineage}_${year})`.
+
+### 10.4. Frontend Traceability
+
+Each Faction entity carries:
+- `rootAncestor: { npcId, npcName, year }` — the NPC whose original memory started the lineage
+- `members[]` — NPC IDs of current faction members
+- `targetLineage` — the ID the faction is bound to (rival, debtor, relic, etc.)
+
+Full inheritance chains for each member are reconstructed on demand by `GET /api/chunk/:x/:y/lineage`. Dead NPCs remain in the ECS world with `status: 'Dead'` and their `ancestralMemories` intact so the chain can be walked backward.
 

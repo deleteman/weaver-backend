@@ -162,6 +162,58 @@ describe('Chunk Delta Application', () => {
         expect(currentMayorSaves).toHaveLength(0);
     });
 
+    test('status delta should mark a generated NPC as Migrated and still include it in the population', () => {
+        loadCoordinate(0, 0);
+        const firstChunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const aliveNpc = firstChunk.population.find(npc => npc.status === 'Alive');
+        expect(aliveNpc).toBeDefined();
+
+        const migrationDelta = [{
+            coordinate: 'world_X0_Y0',
+            entity_name: aliveNpc.id,
+            state_key: 'status',
+            state_value: 'Migrated'
+        }];
+
+        db.getDeltas.mockReturnValue(migrationDelta);
+
+        loadCoordinate(0, 0);
+        const secondChunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const targetAfter = secondChunk.population.find(npc => npc.id === aliveNpc.id);
+        expect(targetAfter).toBeDefined();
+        expect(targetAfter.status).toBe('Migrated');
+    });
+
+    test('status delta should mark a generated NPC as Exiled and still include it in the population', () => {
+        loadCoordinate(0, 0);
+        const firstChunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const aliveNpc = firstChunk.population.find(npc => npc.status === 'Alive');
+        expect(aliveNpc).toBeDefined();
+
+        const exileDelta = [{
+            coordinate: 'world_X0_Y0',
+            entity_name: aliveNpc.id,
+            state_key: 'status',
+            state_value: 'Exiled'
+        }];
+
+        db.getDeltas.mockReturnValue(exileDelta);
+
+        loadCoordinate(0, 0);
+        const secondChunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const targetAfter = secondChunk.population.find(npc => npc.id === aliveNpc.id);
+        expect(targetAfter).toBeDefined();
+        expect(targetAfter.status).toBe('Exiled');
+    });
+
     test('status delta should mark a generated NPC as Dead in the returned chunk', () => {
         loadCoordinate(0, 0);
         const firstChunk = serializeChunk(0, 0);

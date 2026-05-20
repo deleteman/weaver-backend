@@ -35,4 +35,8 @@ function Diplomacy() {
     return { allies: [], colonies: [], suzerain: null };
 }
 
-module.exports = { Identity, Location, History, Knowledge, Inventory, Quests, Status, Political, Diplomacy };
+function Memory() {
+    return { memories: [], ancestralMemories: [] };
+}
+
+module.exports = { Identity, Location, History, Knowledge, Inventory, Quests, Status, Political, Diplomacy, Memory };

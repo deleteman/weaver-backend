@@ -1,5 +1,10 @@
 // src/artifact-effects.js
 const { log } = require('./logger');
+const { generateMerchantInventory } = require('./items');
+const { makeEvent } = require('./event-utils');
+
+const ARTIFACT_MERCHANT_WEALTH_MIN = 500;
+const ARTIFACT_MERCHANT_WEALTH_RANGE = 2501;
 
 /**
  * Apply artifact effects when an NPC obtains or uses an artifact
@@ -12,7 +17,6 @@ class ArtifactEffects {
         if (targetNpc.currentRole === "Citizen" && rng() < 0.75) {
             const oldRole = targetNpc.currentRole;
             targetNpc.currentRole = "Scholar";
-            targetNpc.history.events.push(`Studied the ${artifact.name} and became enlightened, transforming into a Scholar.`);
             log('artifact-effect:tome-conversion', { npcId: targetNpc.identity.id, oldRole, newRole: 'Scholar' });
             return true;
         }
@@ -29,8 +33,13 @@ class ArtifactEffects {
             const newRole = potentialRoles[Math.floor(rng() * potentialRoles.length)];
             const oldRole = targetNpc.currentRole;
             targetNpc.currentRole = newRole;
-            targetNpc.history.events.push(`The ${artifact.name} corrupted their mind, transforming them into a ${newRole}.`);
             log('artifact-effect:jewelry-corruption', { npcId: targetNpc.identity.id, oldRole, newRole });
+
+            if (newRole === 'Merchant') {
+                const townEntity = world.with('identity').where(e => e.identity.type === 'Town' || e.identity.type === 'District').first;
+                targetNpc.merchantInventory = generateMerchantInventory(rng, townEntity?.primaryExport || 'Grain', 0, `world_X${x}_Y${y}`);
+                targetNpc.personalWealth = Math.floor(rng() * ARTIFACT_MERCHANT_WEALTH_RANGE) + ARTIFACT_MERCHANT_WEALTH_MIN;
+            }
         }
 
         log('artifact-effect:jewelry-bonus', { npcId: targetNpc.identity.id, bonusApplied: 0.20 });
@@ -41,9 +50,24 @@ class ArtifactEffects {
         if (['Citizen', 'Beggar', 'Merchant'].includes(targetNpc.currentRole)) {
             const newRole = rng() < 0.5 ? 'Guard' : 'Hero';
             const oldRole = targetNpc.currentRole;
+
+            if (oldRole === 'Merchant') {
+                const allNpcs = [...world.with('currentRole')];
+                const otherMerchants = allNpcs.filter(n => n !== targetNpc && n.currentRole === 'Merchant');
+                for (const slot of (targetNpc.merchantInventory || [])) {
+                    if (otherMerchants.length > 0) {
+                        const recipient = otherMerchants[Math.floor(rng() * otherMerchants.length)];
+                        recipient.merchantInventory = recipient.merchantInventory || [];
+                        const existing = recipient.merchantInventory.find(s => s.itemId === slot.itemId);
+                        if (existing) existing.quantity += slot.quantity;
+                        else recipient.merchantInventory.push({ ...slot });
+                    }
+                }
+                targetNpc.merchantInventory = [];
+            }
+
             targetNpc.currentRole = newRole;
             targetNpc.weaponBonus = (targetNpc.weaponBonus || 0) + 5;
-            targetNpc.history.events.push(`Wielded the ${artifact.name} and rose to power as a ${newRole}.`);
             log('artifact-effect:weapon-elevation', { npcId: targetNpc.identity.id, oldRole, newRole });
             return true;
         }
@@ -57,7 +81,7 @@ class ArtifactEffects {
         return false;
     }
 
-    static applyRelicEffect(world, x, y, artifact, targetNpc, npcs, rng) {
+    static applyRelicEffect(world, x, y, artifact, targetNpc, npcs, rng, currentYear) {
         // Relics: Paradigm shift - convert 50% of town to Cultists or force migration
         if (rng() < 0.5) {
             // Mass conversion to Cultists
@@ -65,16 +89,16 @@ class ArtifactEffects {
             for (const npc of npcs) {
                 if (npc.currentRole !== 'Cultist' && rng() < 0.5) {
                     npc.currentRole = 'Cultist';
-                    npc.history.events.push(`Was touched by the power of the ${artifact.name} and converted to Cultism.`);
+                    npc.history.events.push(makeEvent(`[Year ${currentYear}] Was touched by the power of the ${artifact.name} and converted to Cultism.`, 'career_shift'));
                     converted++;
                 }
             }
             log('artifact-effect:relic-conversion', { coordinate: `${x},${y}`, converted });
-            targetNpc.history.events.push(`The ${artifact.name} transformed the entire town's spiritual alignment.`);
+            targetNpc.history.events.push(makeEvent(`[Year ${currentYear}] The ${artifact.name} transformed the entire town's spiritual alignment.`, 'legacy'));
         } else {
             // Force migration
             log('artifact-effect:relic-migration', { coordinate: `${x},${y}`, artifact: artifact.name });
-            targetNpc.history.events.push(`The ${artifact.name} triggered a mass exodus from the town.`);
+            targetNpc.history.events.push(makeEvent(`[Year ${currentYear}] The ${artifact.name} triggered a mass exodus from the town.`, 'migration'));
         }
     }
 

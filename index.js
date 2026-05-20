@@ -454,12 +454,9 @@ function serializeChunk(x, y) {
     // who were injected without a biome component
     const chunkBiome = determineBiome(x, y);
 
-    // Filter out both "Exiled" AND "Migrated" NPCs
     const npcs = world.with('identity', 'location').where(e =>
         e.location.x === x && e.location.y === y &&
-        e.identity.type === "NPC" &&
-        e.status !== "Exiled" &&
-        e.status !== "Migrated"
+        e.identity.type === "NPC"
     );
 
     const currentGlobalYear = getGlobalYear();
@@ -478,6 +475,7 @@ function serializeChunk(x, y) {
             appearance: generateAppearance(npc.identity.id, currentAge, npc.currentRole, npc.biome || chunkBiome, isDead ? 'Dead' : npc.status, npc.sex),
             dead: isDead,
             inventory: npc.inventory ? npc.inventory.items : [],
+            merchantInventory: npc.currentRole === 'Merchant' ? (npc.merchantInventory || []) : undefined,
             quests: npc.quests ? npc.quests.offeredQuests : [],
             history: npc.history ? npc.history.events : [],
             memories: npc.knowledge ? npc.knowledge.memories : {}
@@ -496,11 +494,23 @@ function serializeChunk(x, y) {
         politicalStance: town?.politicalStance || 'Balanced',
     };
 
+    const factionEntities = Array.from(world.with('identity', 'location').where(e =>
+        e.identity.type === 'Faction' && e.location.x === x && e.location.y === y
+    ));
+    const factionSummary = factionEntities.map(f => ({
+        id: f.identity.id,
+        name: f.identity.name,
+        type: f.factionType,
+        memberCount: (f.members || []).length,
+        foundedYear: f.foundedYear,
+    }));
+
     const result = {
         globalYear: getGlobalYear(),
         coordinate: { x, y },
         town: townData,
         population: npcData,
+        factions: factionSummary,
         tileDescription: generateTileDescription(townData, npcData, chunkBiome, x, y),
     };
     log(`Serialized chunk with ${npcData.length} NPCs at tier ${result.town.tier}`);
@@ -770,6 +780,76 @@ app.get('/api/chunk/:x/:y/chronicle', (req, res) => {
         unloadCoordinate(x, y);
         log(`Chronicle error at (${x}, ${y}): ${err.message}`);
         res.status(500).json({ error: err.message, code: 'CHRONICLE_ERROR' });
+    }
+});
+
+// --- LINEAGE ENDPOINT ---
+app.get('/api/chunk/:x/:y/lineage', (req, res) => {
+    const x = parseInt(req.params.x);
+    const y = parseInt(req.params.y);
+    log(`API request: GET /api/chunk/${x}/${y}/lineage`);
+    try {
+        loadCoordinate(x, y);
+
+        const factions = Array.from(world.with('identity', 'location').where(e =>
+            e.identity.type === 'Faction' && e.location.x === x && e.location.y === y
+        ));
+
+        // Include dead NPCs — they still hold ancestralMemories needed for chain traversal
+        const allNpcs = Array.from(world.with('identity', 'location').where(e =>
+            e.identity.type === 'NPC' && e.location.x === x && e.location.y === y
+        ));
+        const npcIndex = Object.fromEntries(allNpcs.map(n => [n.identity.id, n]));
+
+        function rebuildChain(startNpcId, memType, targetLineage) {
+            const chain = [];
+            let currentId = startNpcId;
+            const visited = new Set();
+            while (currentId && !visited.has(currentId)) {
+                visited.add(currentId);
+                const npc = npcIndex[currentId];
+                if (!npc) break;
+                const mem = (npc.ancestralMemories || []).find(
+                    am => am.type === memType && am.targetLineage === targetLineage
+                );
+                chain.unshift({
+                    npcId: npc.identity.id,
+                    npcName: npc.identity.name,
+                    year: mem?.originYear ?? null,
+                    status: npc.status,
+                });
+                currentId = mem?.inheritedFrom?.npcId ?? null;
+            }
+            return chain;
+        }
+
+        const payload = factions.map(faction => ({
+            id: faction.identity.id,
+            name: faction.identity.name,
+            type: faction.factionType,
+            targetLineage: faction.targetLineage,
+            foundedYear: faction.foundedYear,
+            rootAncestor: faction.rootAncestor,
+            members: (faction.members || []).map(npcId => {
+                const npc = npcIndex[npcId];
+                if (!npc) return { npcId, npcName: 'Unknown', currentRole: null, status: null, inheritanceChain: [] };
+                return {
+                    npcId,
+                    npcName: npc.identity.name,
+                    currentRole: npc.currentRole,
+                    status: npc.status,
+                    inheritanceChain: rebuildChain(npcId, faction.factionType, faction.targetLineage),
+                };
+            }),
+        }));
+
+        unloadCoordinate(x, y);
+        log(`Lineage generated with ${factions.length} factions`);
+        res.json({ coordinate: `world_X${x}_Y${y}`, factions: payload });
+    } catch (err) {
+        unloadCoordinate(x, y);
+        log(`Lineage error at (${x}, ${y}): ${err.message}`);
+        res.status(500).json({ error: err.message, code: 'LINEAGE_ERROR' });
     }
 });
 

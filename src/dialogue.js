@@ -1,6 +1,7 @@
 // src/dialogue.js
 const tracery = require('tracery-grammar');
 const { log } = require('./logger');
+const { MEMORY_STATES } = require('./history');
 
 function talkTo(npc, topic, rng) {
     const npcId = npc.identity ? npc.identity.id : undefined;
@@ -21,17 +22,17 @@ function talkTo(npc, topic, rng) {
         log('dialogue:memory-response', { npcId: npc.identity.id, topic, memoryType });
         
 	// Handle the expanded memory types
-        if (memoryType === "hates") {
+        if (memoryType === MEMORY_STATES.HATES) {
             responseTemplate = "#anger# I despise #subject#! We have a blood feud.";
-        } else if (memoryType === "likes") {
+        } else if (memoryType === MEMORY_STATES.LIKES) {
             responseTemplate = "#subject#? #friendly# Good person.";
-        } else if (memoryType === "loves") {
+        } else if (memoryType === MEMORY_STATES.LOVES) {
             responseTemplate = "#subject#... #romantic# I would do anything for them.";
-        } else if (memoryType === "mourns") {
+        } else if (memoryType === MEMORY_STATES.MOURNS) {
             responseTemplate = "#subject#... #sadness# I miss them every single day.";
-        } else if (memoryType === "child") {
+        } else if (memoryType === MEMORY_STATES.CHILD) {
             responseTemplate = "#subject# is my blood. #pride#";
-        } else if (memoryType === "parent") {
+        } else if (memoryType === MEMORY_STATES.PARENT) {
             responseTemplate = "Ah, #subject#. They raised me. #respect#";
         }
     } else {

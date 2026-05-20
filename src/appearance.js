@@ -34,6 +34,57 @@ const ADULT_HEIGHTS = ['average', 'tall'];
 const BASE_BUILDS = ['lean', 'average', 'stocky', 'muscular', 'heavyset'];
 const BUILDS = ['slight', ...BASE_BUILDS, 'frail'];
 
+// ── Facial detail trait lists ─────────────────────────────────────────────────
+
+const FACE_SHAPES       = ['oval', 'square', 'round', 'angular', 'heart'];
+const EYE_SHAPES        = ['almond', 'round', 'narrow', 'upturned'];
+const COMPLEXIONS       = ['smooth', 'freckled', 'weathered', 'ruddy', 'sallow'];
+const EXPRESSION_BIASES = ['neutral', 'stern', 'weary', 'cheerful', 'suspicious'];
+const NOSE_SHAPES       = ['button', 'straight', 'broad', 'hooked'];
+
+// Per-biome weights aligned to FACE_SHAPES index order
+const BIOME_FACE_WEIGHTS = {
+    Mountain: [0.10, 0.35, 0.15, 0.30, 0.10],
+    Forest:   [0.25, 0.20, 0.20, 0.15, 0.20],
+    Desert:   [0.25, 0.15, 0.20, 0.25, 0.15],
+    Marsh:    [0.25, 0.15, 0.25, 0.20, 0.15],
+    Plains:   [0.25, 0.20, 0.20, 0.15, 0.20],
+};
+
+// Per-sex weights aligned to EYE_SHAPES index order
+const SEX_EYE_WEIGHTS = {
+    female: [0.40, 0.20, 0.15, 0.25],
+    male:   [0.15, 0.35, 0.35, 0.15],
+    other:  [0.25, 0.25, 0.25, 0.25],
+};
+
+// Per-biome weights aligned to COMPLEXIONS index order
+const BIOME_COMPLEXION_WEIGHTS = {
+    Mountain: [0.15, 0.20, 0.20, 0.35, 0.10],
+    Forest:   [0.25, 0.25, 0.20, 0.20, 0.10],
+    Desert:   [0.20, 0.20, 0.30, 0.20, 0.10],
+    Marsh:    [0.15, 0.15, 0.20, 0.15, 0.35],
+    Plains:   [0.25, 0.25, 0.20, 0.20, 0.10],
+};
+
+// Per-role weights aligned to EXPRESSION_BIASES index order
+const ROLE_EXPRESSION_WEIGHTS = {
+    Guard:     [0.10, 0.60, 0.30, 0.00, 0.00],
+    Scholar:   [0.20, 0.00, 0.00, 0.50, 0.30],
+    Cultist:   [0.00, 0.50, 0.20, 0.00, 0.30],
+    Merchant:  [0.30, 0.00, 0.00, 0.60, 0.10],
+    Beggar:    [0.30, 0.10, 0.60, 0.00, 0.00],
+    Exile:     [0.30, 0.10, 0.60, 0.00, 0.00],
+    _default:  [0.40, 0.15, 0.15, 0.15, 0.15],
+};
+
+// Per-sex weights aligned to NOSE_SHAPES index order
+const SEX_NOSE_WEIGHTS = {
+    female: [0.35, 0.40, 0.15, 0.10],
+    male:   [0.10, 0.25, 0.40, 0.25],
+    other:  [0.25, 0.30, 0.25, 0.20],
+};
+
 // ── Clothing ──────────────────────────────────────────────────────────────────
 
 const ROLE_CLOTHING_TIER = {
@@ -148,9 +199,14 @@ function rollRare(rng, typeKey, locationList, valueList, singleChance = 0.15, do
  * @returns {object}
  */
 function generateAppearance(npcId, age, role, biome, status, sex = 'other') {
-    const baseRng  = seedrandom(npcId + '_appearance');
-    const clothRng = seedrandom(npcId + '_clothing');
-    const markRng  = seedrandom(npcId + '_marks');
+    const baseRng       = seedrandom(npcId + '_appearance');
+    const clothRng      = seedrandom(npcId + '_clothing');
+    const markRng       = seedrandom(npcId + '_marks');
+    const faceRng       = seedrandom(npcId + '_face');
+    const eyesRng       = seedrandom(npcId + '_eyes');
+    const complexionRng = seedrandom(npcId + '_complexion');
+    const exprRng       = seedrandom(npcId + '_expr');
+    const noseRng       = seedrandom(npcId + '_nose');
 
     // ── Stable base traits (from baseRng) ─────────────────────────────────────
 
@@ -196,6 +252,40 @@ function generateAppearance(npcId, age, role, biome, status, sex = 'other') {
     if (age < 10)      height = 'very short';
     else if (age < 16) height = 'short';
 
+    // ── Facial detail fields (independent seeds) ─────────────────────────────
+
+    let faceWeightsArr;
+    if (age < 16)      faceWeightsArr = [0.25, 0.05, 0.55, 0.05, 0.10];
+    else if (age > 70) faceWeightsArr = [0.20, 0.15, 0.10, 0.45, 0.10];
+    else               faceWeightsArr = BIOME_FACE_WEIGHTS[biome] || BIOME_FACE_WEIGHTS.Plains;
+    const faceShape = pickWeighted(faceRng, FACE_SHAPES, faceWeightsArr);
+
+    let eyeWeightsArr;
+    if (role === 'Cultist')      eyeWeightsArr = [0.05, 0.10, 0.15, 0.70];
+    else if (role === 'Scholar') eyeWeightsArr = [0.15, 0.60, 0.15, 0.10];
+    else                         eyeWeightsArr = SEX_EYE_WEIGHTS[sex] || SEX_EYE_WEIGHTS.other;
+    const eyeShape = pickWeighted(eyesRng, EYE_SHAPES, eyeWeightsArr);
+
+    let complexionWeightsArr;
+    if (role === 'Beggar' || role === 'Exile')         complexionWeightsArr = [0.05, 0.05, 0.10, 0.05, 0.75];
+    else if (role === 'Guard' || role === 'Blacksmith') complexionWeightsArr = [0.10, 0.10, 0.15, 0.60, 0.05];
+    else if (age < 16)                                  complexionWeightsArr = [0.60, 0.20, 0.05, 0.10, 0.05];
+    else if (age >= 50)                                 complexionWeightsArr = [0.10, 0.10, 0.60, 0.15, 0.05];
+    else                                                complexionWeightsArr = BIOME_COMPLEXION_WEIGHTS[biome] || BIOME_COMPLEXION_WEIGHTS.Plains;
+    const complexion = pickWeighted(complexionRng, COMPLEXIONS, complexionWeightsArr);
+
+    const expressionBias = pickWeighted(
+        exprRng,
+        EXPRESSION_BIASES,
+        ROLE_EXPRESSION_WEIGHTS[role] || ROLE_EXPRESSION_WEIGHTS._default,
+    );
+
+    let noseWeightsArr;
+    if (build === 'heavyset' || build === 'stocky')                      noseWeightsArr = [0.05, 0.15, 0.65, 0.15];
+    else if (build === 'lean' || build === 'frail' || build === 'slight') noseWeightsArr = [0.30, 0.45, 0.10, 0.15];
+    else                                                                   noseWeightsArr = SEX_NOSE_WEIGHTS[sex] || SEX_NOSE_WEIGHTS.other;
+    const noseShape = pickWeighted(noseRng, NOSE_SHAPES, noseWeightsArr);
+
     // ── Clothing (role tier, independent seed) ────────────────────────────────
 
     const tier = ROLE_CLOTHING_TIER[role] || 'common';
@@ -231,6 +321,11 @@ function generateAppearance(npcId, age, role, biome, status, sex = 'other') {
         scars,
         tattoos,
         marks,
+        faceShape,
+        eyeShape,
+        complexion,
+        expressionBias,
+        noseShape,
     };
 }
 
@@ -245,4 +340,9 @@ module.exports = {
     FACIAL_HAIR,
     HEIGHTS,
     BUILDS,
+    FACE_SHAPES,
+    EYE_SHAPES,
+    COMPLEXIONS,
+    EXPRESSION_BIASES,
+    NOSE_SHAPES,
 };
