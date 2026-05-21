@@ -7,7 +7,47 @@ const SIZES = ['hamlet', 'small', 'modest', 'large', 'sprawling'];
 
 const ATMOSPHERES = ['peaceful', 'bustling', 'tense', 'grim', 'festive', 'desolate', 'prosperous'];
 
-const WALLS = ['none', 'timber palisade', 'stone walls', 'reinforced gatehouse', 'fortress ramparts'];
+const WALLS_BY_TIER = {
+    '1_low': {
+        default:  ['none', 'rough earthworks', 'ditch and berm'],
+        Mountain: ['none', 'rough earthworks', 'stone rubble barrier'],
+        Desert:   ['none', 'ditch and berm', 'mud-brick mound'],
+        Marsh:    ['none', 'ditch and berm', 'raised log perimeter'],
+        Forest:   ['none', 'rough earthworks', 'ditch and berm'],
+    },
+    '1_any': {
+        default:  ['timber palisade', 'split-log fence', 'stake barrier', 'woven wattle fence'],
+        Mountain: ['timber palisade', 'stake barrier', 'dry-stone boundary wall'],
+        Desert:   ['mud-brick wall', 'adobe fence', 'stake barrier', 'woven wattle fence'],
+        Marsh:    ['raised wooden walkway wall', 'timber palisade', 'woven wattle fence'],
+        Forest:   ['timber palisade', 'split-log fence', 'woven wattle fence', 'stake barrier'],
+    },
+    '2': {
+        default:  ['stone walls', 'mortared stone wall', 'earthen rampart'],
+        Mountain: ['stone walls', 'mortared stone wall', 'carved rock wall'],
+        Desert:   ['mud-brick wall', 'adobe rampart', 'earthen rampart'],
+        Marsh:    ['earthen rampart', 'stone walls', 'raised palisade wall'],
+        Forest:   ['stone walls', 'earthen rampart', 'mortared stone wall'],
+    },
+    '3': {
+        default:  ['reinforced gatehouse', 'curtain wall', 'crenellated wall'],
+        Mountain: ['reinforced gatehouse', 'curtain wall', 'mountain fortress gate'],
+        Desert:   ['reinforced gatehouse', 'crenellated wall', 'sandstone curtain wall'],
+        Marsh:    ['reinforced gatehouse', 'curtain wall', 'timber-reinforced wall'],
+        Forest:   ['reinforced gatehouse', 'crenellated wall', 'curtain wall'],
+    },
+    '4': {
+        default:  ['fortress ramparts', 'iron-banded gate', 'bastion walls', 'citadel walls'],
+        Mountain: ['fortress ramparts', 'bastion walls', 'citadel walls', 'iron-banded gate'],
+        Desert:   ['fortress ramparts', 'citadel walls', 'iron-banded gate', 'bastion walls'],
+        Marsh:    ['fortress ramparts', 'iron-banded gate', 'citadel walls', 'bastion walls'],
+        Forest:   ['fortress ramparts', 'iron-banded gate', 'bastion walls', 'citadel walls'],
+    },
+};
+
+const WALLS = [...new Set(
+    Object.values(WALLS_BY_TIER).flatMap(entry => Object.values(entry).flat())
+)].sort();
 
 const LANDMARKS = [
     'crumbling watchtower', 'ancient well', 'market square', 'great oak', 'standing stones',
@@ -88,12 +128,16 @@ function getAtmosphere(stance, tier) {
     }
 }
 
-function getWalls(tier, population) {
-    if (tier >= 4) return 'fortress ramparts';
-    if (tier === 3) return 'reinforced gatehouse';
-    if (tier === 2) return 'stone walls';
-    // tier 1
-    return population < 5 ? 'none' : 'timber palisade';
+function getWalls(tier, population, biome, rng) {
+    const tierKey = tier >= 4 ? '4'
+                  : tier === 3 ? '3'
+                  : tier === 2 ? '2'
+                  : population < 5 ? '1_low'
+                  : '1_any';
+
+    const tierOptions = WALLS_BY_TIER[tierKey];
+    const pool = tierOptions[biome] || tierOptions.default;
+    return pool[Math.floor(rng() * pool.length)];
 }
 
 function getStreets(biome, tier) {
@@ -169,7 +213,7 @@ function generateTileDescription(town, npcs, biome, x, y) {
     return {
         size:        getSize(population),
         atmosphere:  getAtmosphere(stance, tier),
-        walls:       getWalls(tier, population),
+        walls:       getWalls(tier, population, biome, rng),
         streets:     getStreets(biome, tier),
         surroundings,
         landmark,
@@ -199,6 +243,7 @@ module.exports = {
     SIZES,
     ATMOSPHERES,
     WALLS,
+    WALLS_BY_TIER,
     LANDMARKS,
     SURROUNDINGS,
     TERRAIN,

@@ -132,7 +132,7 @@ Full 4-pass world load for a coordinate.
 | `role` | string | Current role (see role list above) |
 | `sex` | string | `"male"` \| `"female"` \| `"other"` — assigned deterministically at creation; `"other"` for legacy NPCs loaded from old deltas |
 | `status` | string | `"Alive"` \| `"Dead"` \| `"Exiled"` \| `"Migrated"` |
-| `dead` | boolean | Convenience alias for `status === "Dead"` — use to show death-state portrait without inspecting `status` |
+| `dead` | boolean | `true` when `status === "Dead"`, or when `status === "Alive"` and the NPC's age exceeds `MAX_NATURAL_LIFESPAN` (80). Always `false` for `"Migrated"` and `"Exiled"` NPCs — use `status` to distinguish them from the dead |
 | `appearance` | object | Structured visual profile (see below) |
 | `inventory` | object[] | Items carried by this NPC — see Artifact object fields below |
 | `quests` | object[] | Quests this NPC offers |
@@ -261,7 +261,7 @@ Role → clothing tier mapping: Mayor/Scholar → noble; Guard → military; Cul
 |-------|------|----------------|
 | `size` | string | `hamlet` (pop < 5), `small` (5–9), `modest` (10–14), `large` (15–20), `sprawling` (21+) |
 | `atmosphere` | string | `peaceful`, `bustling`, `tense`, `grim`, `festive`, `desolate`, `prosperous` — derived from political stance × tier |
-| `walls` | string | `none` (tier 1 pop < 5), `timber palisade` (tier 1), `stone walls` (tier 2), `reinforced gatehouse` (tier 3), `fortress ramparts` (tier 4–5) |
+| `walls` | string | Seeded by coordinate; selected from a tier- and biome-aware pool. Tier 1 (pop < 5): earthworks/ditch variants; Tier 1 (pop ≥ 5): timber/palisade variants; Tier 2: stone/earthen walls; Tier 3: gatehouses and curtain walls; Tier 4–5: ramparts and citadel walls. Biome influences material (Mountain → stone, Desert → adobe, Marsh → timber). Stable across revisits. See `WALLS` export for full allowlist (~20 values). |
 | `streets` | string | `stone-paved` (Mountain), `sand-swept` (Desert tier 3+), `dirt path` (Desert tier 1–2, Plains/Wilderness), `muddy cobblestone` (Forest, Marsh tier 1–2), `wooden boardwalk` (Marsh tier 3+) |
 | `surroundings` | string | Biome-specific: Forest → `dense canopy`, `ancient oaks`, `pine thicket`, `mossy clearings`; Mountain → `jagged peaks`, `rocky outcrops`, `narrow passes`, `alpine meadow`; Desert → `drifting sands`, `rocky plateau`, `salt flats`, `dry riverbed`; Marsh → `murky wetlands`, `reed beds`, `boggy ground`, `shallow flood plain`; Plains/Wilderness → `rolling hills`, `open plains`, `scrubland`, `dark thicket`. Seeded from coordinate — stable across revisits. |
 | `landmark` | string | One of 13 named landmarks (e.g. `crumbling watchtower`, `ancient well`, `great oak`, `guild hall`). Seeded from coordinate — stable across revisits. |
@@ -627,11 +627,14 @@ Kill a living NPC permanently.
 **Required fields:** `x`, `y`, `target`, `playerState`
 
 **Mechanics:**
-- `SuccessChance = 0.40 + strength×0.05 + stealth×0.05`; Guards −0.30, Mayors −0.40
+- `SuccessChance = 0.40 + strength×0.05 + stealth×0.05`; Guards −0.30, Mayors −0.40, Puppet admins −0.20
 - Success: NPC status → `"Dead"`, +75 XP
-- If target was Mayor and `playerState.reputation >= 20`: player becomes Mayor (`playerState.titles[townName] = "Mayor"`), +50 reputation
-- If target was Mayor and reputation < 20: `ruler` set to `"None"`, −40 reputation
+- If target was Mayor at a **sovereign town** and `playerState.reputation >= 20`: player becomes Mayor (`playerState.titles[townName] = "Mayor"`), +50 reputation
+- If target was Mayor at a **sovereign town** and reputation < 20: `ruler` set to `"None"`, −40 reputation
+- If target was Mayor or `"Puppet"` at a **District**: player does NOT become mayor; parent city's rule continues
 - Failure: −30 reputation
+
+> **Puppet NPCs**: When a town is subjugated (not annexed), the original Mayor NPC survives with `currentRole: "Puppet"`. Killing a Puppet yields +75 XP but never transfers the throne — the parent city will install a replacement. Puppet NPCs appear in the `population` array with `currentRole: "Puppet"`.
 
 ---
 
@@ -656,10 +659,14 @@ Deliver an item to an NPC (Fetch quest) **or** report a completed bounty.
 **Required fields:** `x`, `y`, `target`, `playerState`  
 **Optional:** `item`/`itemId` — include to deliver an item; omit to report a bounty
 
-**Item delivery mechanics (+50 XP, +20 reputation):**
+**Fetch quest mechanics (+50 XP, +20 reputation):**
+- `itemId` (or auto-detected from `playerState.inventory`) must match the `itemType` on the NPC's `"Fetch"` quest
+- Item type must match the NPC's Fetch quest `itemType` if they have one
+- Removes the `"Fetch"` quest from the NPC's `quests` array in the response
+- Quest will not regenerate on future chunk loads (Scholar's inventory is now non-empty)
+- 75% chance to convert a `Citizen` questGiver → `Scholar` when item type is `Tome`
 - Giving a `Weapon` to a non-Mayor NPC → NPC role becomes `"Hero"`
 - Giving `Jewelry` → NPC role becomes `"Cultist"`
-- Item type must match the NPC's Fetch quest `itemType` if they have one
 
 **Mystery Heist mechanics (+50 XP, +20 reputation):**
 - `itemId` must match the `itemId` on the NPC's `"Mystery Heist"` quest
@@ -668,7 +675,8 @@ Deliver an item to an NPC (Fetch quest) **or** report a completed bounty.
 
 **Bounty report mechanics (+100 XP, +30 reputation):**
 - NPC must have a `"hates"` memory for a now-dead NPC
-- Clears that memory to `"avenged"`
+- Clears that memory to `"avenged"` (persisted as a delta)
+- Removes the `"Bounty"` quest from the NPC's `quests` array in the response
 - At 3 bounties, title `"Master Assassin"` added to `playerState.titles["Global"]`
 
 ---
@@ -689,7 +697,7 @@ Change a living NPC's role by mayoral decree.
 
 **Required fields:** `x`, `y`, `target`, `newRole`, `playerState`
 
-**Valid roles:** Guard, Mayor, Hero, Scholar, Merchant, Blacksmith, Bandit, Cultist, Beggar, Citizen
+**Valid roles:** Guard, Mayor, Puppet, Hero, Scholar, Merchant, Blacksmith, Bandit, Cultist, Beggar, Citizen
 
 ---
 
@@ -723,7 +731,8 @@ Attempt to assassinate the ruling Mayor of a Kingdom-tier settlement and seize t
 
 **Mechanics:**
 - `FailChance = 0.95 - (stealth × 0.01) - (strength × 0.01) - (weaponTier × 0.05)`
-- Success: Mayor status → `"Dead"`, player gains the Mayor title, +5000 XP; town history event `type: "regicide"` written
+- Success: Mayor status → `"Dead"`, player gains the `"King"` title (`playerState.titles[townName] = "King"`), +5000 XP; town history event `type: "regicide"` written
+- The `"King"` title is recognized by all Mayor-only actions (tax, banish, abdicate, decree) — the player has full ruler powers after a successful regicide
 - Failure: −50 reputation; town history event `type: "chaos"` written
 
 ---

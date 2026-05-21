@@ -6,7 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- `CONQUEST_TYPES` constant (`{ ANNEXATION, SUBJUGATION }`) exported from `src/politics.js` for type-safe conquest state references.
+- `NPC_ROLES` constant exported from `src/politics.js` covering `Mayor`, `Puppet`, `Guard`, `Hero`, `Citizen`.
+- New `src/politics.test.js` with full coverage of `resolveConflict()` outcomes, conquest delta writing, promotion, demotion, and the new constants.
+
 ### Fixed
+- **Mayors in districts (Gap 1 — conquest outcomes never applied)**: `resolveConflict()` computed `loserMayorKilled` and `loserMayorState: 'Puppet'` but never persisted them. The method now accepts an optional `loserCoordinate` and writes a `conquest_type` delta (`"annexation"` or `"subjugation"`) to the loser's coordinate so downstream passes can act on it.
+- **Mayors in districts (Gap 2 — NPC roles not cleaned up)**: `loadAsDistrict()` correctly set `districtEntity.currentMayor` to the parent's ruler but did not touch NPC entities. The Legends/Future passes could promote a local NPC to `currentRole === "Mayor"`, leaving a visible "Mayor" in a district the player could never rule. After simulation, `loadAsDistrict()` now reads the `conquest_type` delta and reconciles all local Mayor NPCs: `"annexation"` (or organic expansion) marks them `Dead`; `"subjugation"` demotes them to `"Puppet"`. Both outcomes write a delta and push a history event.
+- **King title grants no powers (Gap 3 — isMayor() strict check)**: After a successful regicide the player received `playerState.titles[townName] = "King"` but `isMayor()` only checked `=== "Mayor"`, silently stripping the player of all ruler actions (tax, banish, abdicate, decree). `RULER_TITLES` constant (`["Mayor", "King"]`) added to `src/actions.js`; `isMayor()` now uses `RULER_TITLES.includes()` so both titles grant ruler access.
+- **Puppet NPC in `assassinate()`**: Puppet NPCs (former mayors after subjugation) were subject to the full Mayor success-chance penalty (`-0.40`) and the "district is briefly leaderless" message. Puppets now apply a lighter penalty (`-0.20`) and produce a targeted message explaining that the parent city will appoint a replacement.
+
+### Changed
+- Wall type variety: `getWalls()` now accepts `biome` and `rng` parameters and selects
+  deterministically from a tier+biome-aware pool instead of returning a single fixed value
+  per tier. The full set of possible `walls` values has expanded from 5 to ~20 strings.
+  The `WALLS` export is now derived from `WALLS_BY_TIER` so it always stays in sync.
+  Same coordinates always produce the same wall type; different coordinates at the same
+  tier and biome will now vary.
+
+### Fixed
+- Chunk endpoint reported `tier: 1` for sovereign tiles that the map already showed at a higher
+  tier. The Base Pass now initializes the settlement at `estimateTierFromTime(x, y)` instead of
+  always starting at tier 1, so the chunk and map agree from the first visit. Subsequent saves
+  preserve the correct tier in the DB.
+- Map endpoint returned `tier: 3` and `settlementType: "FullCity"` for district tiles
+  instead of `tier: 1` / `"Town"`. `computeOwnership()` now overrides tier, settlementType,
+  and territoryRadius when a tile is identified as non-sovereign, matching the chunk endpoint.
+- Map endpoint could select a different parent city for a district tile than the chunk
+  endpoint. `computeOwnership()` now only considers DB-confirmed (visited) tiles as
+  potential owners, matching the `findEstimatedParent()` logic in the chunk pipeline.
+- NPCs that outlived the 2% yearly death roll were silently stamped `dead: true` at serialization time with no death event. The simulation loop in `history.js` now force-kills any NPC whose age reaches their personal death age (`MAX_NATURAL_LIFESPAN + seeded variance`, range 80–89), triggering full death mechanics — death event, `propagate_memories`, and inheritance. A serialization-time fallback also appends a retroactive death event for any NPC that slips past simulation (e.g. immigrants). `MAX_NATURAL_LIFESPAN` (80) and `MAX_LIFESPAN_VARIANCE` (10) are now defined in `history.js` and re-exported.
+- Migrated and Exiled NPCs whose computed age exceeds `MAX_NATURAL_LIFESPAN` were incorrectly serialized as `status: "Dead"` / `dead: true` and rendered in the graveyard. The `isDead` flag now short-circuits for departed NPCs (`"Migrated"` / `"Exiled"`), preserving their original status and setting `dead: false` in the chunk response.
 - **Mystery Heist — duplicate `year: 0` history event (bug-7a)**: `ArtifactEffects` (Weapon/Tome/Jewelry) were pushing a redundant `career_shift` event without a `[Year X]` prefix, causing `makeEvent()` to resolve `year: 0`. These pushes are removed; the `butterflyEvent` in `turnInQuest()` is now the single authoritative history record for Weapon/Tome/Jewelry role changes. Relic events (which affect other town NPCs) are kept but now correctly receive `currentYear` and include the `[Year X]` prefix.
 - **Mystery Heist — infinite quest loop (bug-7b)**: After a successful Mystery Heist turnin, `turnInQuest()` now changes the questGiver's memory for the enemy to `MEMORY_STATES.SATISFIED`, persists a `memory_<enemyId>` delta, and removes the resolved quest from `offeredQuests`. `generateQuests()` only creates Mystery Heist quests when the feeling is `MEMORY_STATES.HATES`, so the quest no longer regenerates on subsequent chunk loads.
 - Exiled NPCs were silently excluded from the `population` array in chunk responses. They now appear with `status: "Exiled"` — consistent with how `"Dead"` and `"Migrated"` NPCs are handled. `API-REFERENCE.md` updated accordingly.

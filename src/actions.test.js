@@ -270,6 +270,36 @@ describe('Player Actions', () => {
         expect(result.message).toMatch(/gave/i);
     });
 
+    test('turnInQuest removes Fetch quest from offeredQuests after successful delivery', () => {
+        const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        questGiver.quests.offeredQuests = [{ type: "Fetch", itemType: "Tome" }];
+
+        playerState.inventory = [{ id: "tome-removal-id", name: "The Bone Tome", type: "Tome" }];
+
+        const result = actions.turnInQuest(world, "world_X0_Y0", dummyTargetId, "tome-removal-id", playerState);
+
+        expect(result.success).toBe(true);
+        expect(questGiver.quests.offeredQuests).toHaveLength(0);
+    });
+
+    test('turnInQuest removes Bounty quest from offeredQuests after reporting avenged kill', () => {
+        const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        const enemyId = "bounty-removal-enemy";
+
+        questGiver.knowledge.memories[enemyId] = 'hates';
+        questGiver.quests.offeredQuests = [{ type: "Bounty", target: enemyId }];
+
+        world.add({
+            identity: { id: enemyId, name: "Dead Foe", type: "NPC" },
+            status: "Dead"
+        });
+
+        const result = actions.turnInQuest(world, "world_X0_Y0", dummyTargetId, playerState, undefined);
+
+        expect(result.success).toBe(true);
+        expect(questGiver.quests.offeredQuests).toHaveLength(0);
+    });
+
     test('turnInQuest falls to bounty branch when no itemId sent and inventory has no matching item', () => {
         const questGiver = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
         questGiver.quests.offeredQuests = [{ type: "Fetch", itemType: "Tome" }];
@@ -1000,6 +1030,85 @@ describe('Player Actions', () => {
             const ev = questGiver.history.events[0];
             expect(ev.year).toBeGreaterThan(0);
             expect(ev.description).toMatch(/\[Year \d+\]/);
+        });
+    });
+
+    // ─── Ruler title / isMayor gap (Gap 3 fix) ───────────────────────────────
+    describe('Ruler title recognition', () => {
+        test('taxTown succeeds when player holds King title after regicide', () => {
+            playerState.titles['Town'] = 'King';
+
+            const result = actions.taxTown(world, 'world_X0_Y0', playerState);
+
+            expect(result.success).toBe(true);
+        });
+
+        test('banish is not blocked by authorization when player holds King title', () => {
+            playerState.titles['Town'] = 'King';
+
+            const result = actions.banish(world, 'world_X0_Y0', dummyTargetId, playerState);
+
+            // Target dummy is missing `description`/`age` so banish may still fail,
+            // but the important check is that it is NOT blocked by authorization.
+            expect(result.message).not.toContain('Only the Mayor');
+        });
+
+        test('abdicate succeeds when player holds King title', () => {
+            playerState.titles['Town'] = 'King';
+
+            const result = actions.abdicate(world, 'world_X0_Y0', playerState);
+
+            expect(result.success).toBe(true);
+            expect(playerState.titles['Town']).toBeUndefined();
+        });
+
+        test('taxTown fails when player has no title', () => {
+            playerState.titles = {};
+
+            const result = actions.taxTown(world, 'world_X0_Y0', playerState);
+
+            expect(result.success).toBe(false);
+        });
+    });
+
+    // ─── Puppet role in districts (Gap 2 fix) ────────────────────────────────
+    describe('Puppet NPC in district', () => {
+        test('assassinating a Puppet in a District does not make the player mayor', () => {
+            const puppet = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+            puppet.currentRole = 'Puppet';
+            puppet.history = { events: [] };
+
+            // Promote the town entity to a District
+            const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+            town.identity.type = 'District';
+            town.parentCity = 'world_X1_Y1';
+
+            jest.spyOn(Math, 'random').mockReturnValue(0.0); // force success
+
+            const result = actions.assassinate(world, 'world_X0_Y0', dummyTargetId, playerState);
+
+            expect(result.success).toBe(true);
+            expect(playerState.titles['Town']).toBeUndefined();
+            expect(result.message).toMatch(/puppet/i);
+        });
+
+        test('assassinating a Puppet applies a lighter success penalty than a Mayor', () => {
+            // Puppet penalty is -0.20, Mayor penalty is -0.40.
+            // With stealth=0, strength=0: base = 0.40. Mayor → 0.00 (never succeeds). Puppet → 0.20 (sometimes succeeds).
+            // Spy on Math.random to return a value just above Mayor threshold but below Puppet threshold.
+            const puppetNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+            puppetNpc.currentRole = 'Puppet';
+            puppetNpc.history = { events: [] };
+
+            playerState.stats.stealth = 0;
+            playerState.stats.strength = 0;
+
+            // random = 0.15 → Puppet succeeds (0.20 > 0.15), Mayor would fail (0.00 < 0.15)
+            jest.spyOn(Math, 'random').mockReturnValue(0.15);
+
+            const result = actions.assassinate(world, 'world_X0_Y0', dummyTargetId, playerState);
+
+            expect(result.success).toBe(true);
         });
     });
 });

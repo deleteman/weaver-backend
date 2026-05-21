@@ -51,6 +51,23 @@ All chunk loading must follow this order. Do not skip or reorder passes:
 3. **Delta Pass** — Apply SQLite overrides (player kills, steals, migrations, territory claims)
 4. **Future Pass** — Simulate forward from Year 51 → `globalYear`
 
+### 5 — NPC Status Values & Serialization Contract
+
+An NPC's `status` field can be one of four values:
+
+| Value | Meaning |
+|-------|---------|
+| `"Alive"` | Present and living at this coordinate |
+| `"Dead"` | Died at this coordinate (natural, murder, or old age) |
+| `"Migrated"` | Voluntarily left this coordinate during simulation |
+| `"Exiled"` | Banished by the Mayor via player action |
+
+**Migrated and Exiled NPCs are intentionally included in the chunk serialization.** The UI
+consumes them to render departed characters (e.g., in a "departed residents" panel). Do NOT
+filter them out server-side and do NOT override their `status` to `"Dead"` — even if their
+computed age exceeds `MAX_NATURAL_LIFESPAN`. Age-based death only applies to `"Alive"` NPCs.
+The `dead` field in the response must be `false` for Migrated and Exiled NPCs.
+
 ---
 
 ## Code Style

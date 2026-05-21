@@ -44,7 +44,7 @@ The engine utilizes `miniplex`. Every actor, town, and child is an entity compos
 | `Identity` | `name`, `type`, `id` (UUID) | Defines the entity. UUIDs are deterministic hashes of the seed, year, and name. | 
 | `Location` | `tiles` (array), `parent_id` | Array of X/Y pairs supporting multi-tile cities. | 
 | `History` | `events` (array of event objects) | Chronological logs. Each event: `{ id, year, description, type, causedBy }`. `id` is `"ev_"` + 8-char SHA-1 hash of description. `type` is a machine-readable slug (e.g. `"death"`, `"power_seizure"`). `causedBy` links to the `id` of a causal event or `null`. Old plain-string deltas are auto-wrapped as `type: "legacy"` on read. | 
-| `Knowledge` | `memories` (dict) | Maps NPC UUIDs to statuses (`loves`, `likes`, `hates`, `mourns`, `parent`, `child`, `avenged`, `satisfied`). `satisfied` is set when a Mystery Heist quest is successfully turned in, preventing the quest from regenerating. | 
+| `Knowledge` | `memories` (dict) | Maps NPC UUIDs to statuses (`loves`, `likes`, `hates`, `mourns`, `parent`, `child`, `avenged`, `satisfied`). Quest-gating states: `satisfied` (Mystery Heist turned in — prevents Heist re-generation), `avenged` (Bounty reported — prevents Bounty re-generation). `hates` is the only state that triggers quest generation; the other states are naturally excluded by the loop. | 
 | `Inventory` | `items` (array of objects) | Rich Artifact objects with their own UUIDs and lore. Each item carries: `id`, `name`, `type` (`Tome`/`Jewelry`/`Weapon`/`Relic`), `description`, `content` (Tomes only), `creationYear`, `originSettlement` (coordinate key), `historicalSignificance` (string array), `baseValue` (deterministic gold value seeded by type), and `value` (age-adjusted; use `calculateItemValue(item, globalYear)` from `src/items.js` to compute). `prefix` (`'Ancient'` or `'Relic'`) is added by `calculateItemValue` for items older than 100 or 300 years respectively. | 
 | `Status` | `state` (enum) | `Alive`, `Dead`, `Migrated`, `Exiled`. | 
 | `Political` | `tier` (int), `demographics` | Tracks settlement size (1-5) and dominant traits (e.g., "Scholar Heavy"). | 
@@ -166,9 +166,23 @@ Splitting into independent sub-seeds means extending one group in a future versi
 | common | Blacksmith, Merchant, Citizen, Child |
 | outcast | Bandit, Beggar, Exile |
 
-**Dead NPCs:** the `dead` boolean is set to `true` when `status === "Dead"`. The full `appearance` object is still returned so clients can render a death-state portrait (greyscale, skull overlay, etc.) without losing the NPC's visual identity.
+**Dead NPCs:** the `dead` boolean is `true` when `status === "Dead"`, or when `status === "Alive"` and the NPC's computed age exceeds `MAX_NATURAL_LIFESPAN` (80 years). It is always `false` for `"Migrated"` and `"Exiled"` NPCs — age past the lifespan cap is irrelevant for departed characters. The full `appearance` object is still returned so clients can render a death-state portrait (greyscale, skull overlay, etc.) without losing the NPC's visual identity.
 
 **Marks (scars, tattoos, birthmarks):** arrays of 0–2 entries, intentionally rare. Each entry is a `{ location, type }` or `{ location, motif }` object drawn from fixed discrete lists. Rarity thresholds: scars ~15%/5%, tattoos ~12%/4%, marks ~10%/3% for single/double rolls.
+
+### 4.5. Quest System — Generation & Lifecycle
+
+Quests are **not persisted**. They are regenerated deterministically on every chunk load via `generateQuests()` (seeded with `currentCoordinate + "_quests"`). The three quest types and their persistence strategies are:
+
+| Quest Type | Generation Condition | Turn-in Persistence | Prevents Regeneration Via |
+|---|---|---|---|
+| `Mystery Heist` | NPC `hates` a living enemy who has items (50% vs Bounty) | Memory set to `"satisfied"` (delta saved) | `satisfied` memory — `generateQuests` only loops `"hates"` entries |
+| `Bounty` | NPC `hates` a living enemy with no items (or 50% chance when enemy has items) | Memory set to `"avenged"` (delta saved) | `avenged` memory + enemy is `Dead` — both block regeneration |
+| `Fetch` | Scholar NPC has an empty inventory | Tome/artifact added to Scholar's inventory (inventory delta saved) | Scholar's `inventory.items.length > 0` blocks regeneration |
+
+**Quest removal from response:** All three quest types remove their quest object from `offeredQuests` in the turn-in response immediately, so the `chunkData` returned by `/api/action/turnin` always reflects the post-action state without the completed quest.
+
+**RNG note:** `generateQuests` uses a fresh seeded RNG instance on every load, so quest lists are identical across loads for the same coordinate (until a turn-in delta changes the underlying condition).
 
 ## 5. The Macro-Political Engine & Conquest
 
@@ -186,9 +200,11 @@ When a town levels up to a Small City, it must claim adjacent tiles.
 
 * **District Mayor Inheritance:** A District's ruler is always read from the parent's saved `currentMayor` delta at load time. The district never stores its own `currentMayor` persistently — only the parent's saved value is authoritative.
 
+* **District NPC Mayor Reconciliation:** After the Legends/Future passes run inside a district, `loadAsDistrict()` reconciles any local NPC that simulation promoted to `currentRole === "Mayor"`. The reconciliation reads the `conquest_type` delta for the coordinate and applies the appropriate fate: `"annexation"` → NPC is marked `Dead` (executed when annexed); `"subjugation"` → NPC is demoted to `currentRole: "Puppet"` (surviving puppet administrator). Organic expansion with no conquest delta also marks the local Mayor Dead. A `Puppet` NPC represents a subjugated mayor — the player may kill them, but doing so does not grant a new ruler title; only the parent city's ruler can be deposed to change control of the district.
+
 ### 5.2. Conflict Resolution (The Math of War)
 
-Conflict resolution is triggered automatically during the Future Pass when a settlement promotes to a new tier. `PoliticalEngine.resolveConflict()` checks adjacent tiles for occupied neighbours and determines annexation, subjugation, or repulsion outcomes, persisting results as Deltas.
+Conflict resolution is triggered automatically during the Future Pass when a settlement promotes to a new tier. `PoliticalEngine.resolveConflict()` checks adjacent tiles for occupied neighbours and determines annexation, subjugation, or repulsion outcomes, persisting results as Deltas. On Crushing Victory or Subjugation, `resolveConflict()` writes a `conquest_type` delta (`"annexation"` or `"subjugation"`) to the loser's coordinate key, which `loadAsDistrict()` reads to apply the correct Mayor fate.
 
 When expansion limits are reached, Aggressive or Opportunistic towns invade. The combat is resolved strictly mathematically using deterministic peeking:
 

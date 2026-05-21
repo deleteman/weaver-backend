@@ -240,4 +240,102 @@ describe('Chunk Delta Application', () => {
         expect(targetAfter.status).toBe('Dead');
         expect(db.getDeltas).toHaveBeenCalledWith('world_X0_Y0');
     });
+
+    test('Migrated NPC older than MAX_NATURAL_LIFESPAN is NOT serialized as dead', () => {
+        // At year 200, founding NPCs (born ~year 1) are ~199 years old — well over the 80-year cap.
+        // A Migrated NPC must keep status="Migrated" and dead=false regardless of age.
+        db.getGlobalYear.mockReturnValue(200);
+
+        loadCoordinate(0, 0);
+        const firstChunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const aliveNpc = firstChunk.population.find(npc => npc.status === 'Alive');
+        expect(aliveNpc).toBeDefined();
+
+        db.getDeltas.mockReturnValue([{
+            coordinate: 'world_X0_Y0',
+            entity_name: aliveNpc.id,
+            state_key: 'status',
+            state_value: 'Migrated'
+        }]);
+
+        loadCoordinate(0, 0);
+        const secondChunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const targetAfter = secondChunk.population.find(npc => npc.id === aliveNpc.id);
+        expect(targetAfter).toBeDefined();
+        expect(targetAfter.status).toBe('Migrated');
+        expect(targetAfter.dead).toBe(false);
+    });
+
+    test('Exiled NPC older than MAX_NATURAL_LIFESPAN is NOT serialized as dead', () => {
+        db.getGlobalYear.mockReturnValue(200);
+
+        loadCoordinate(0, 0);
+        const firstChunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const aliveNpc = firstChunk.population.find(npc => npc.status === 'Alive');
+        expect(aliveNpc).toBeDefined();
+
+        db.getDeltas.mockReturnValue([{
+            coordinate: 'world_X0_Y0',
+            entity_name: aliveNpc.id,
+            state_key: 'status',
+            state_value: 'Exiled'
+        }]);
+
+        loadCoordinate(0, 0);
+        const secondChunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const targetAfter = secondChunk.population.find(npc => npc.id === aliveNpc.id);
+        expect(targetAfter).toBeDefined();
+        expect(targetAfter.status).toBe('Exiled');
+        expect(targetAfter.dead).toBe(false);
+    });
+
+    test('Alive NPC older than MAX_NATURAL_LIFESPAN is still serialized as dead', () => {
+        // Founding NPCs born at year 1 will be ~199 at year 200, exceeding the 80-year lifespan cap.
+        db.getGlobalYear.mockReturnValue(200);
+
+        loadCoordinate(0, 0);
+        const chunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const overageNpc = chunk.population.find(npc => npc.age > 80 && npc.status === 'Dead');
+        expect(overageNpc).toBeDefined();
+        expect(overageNpc.dead).toBe(true);
+    });
+
+    test('NPC dead from age overflow always has a death event in the serialized history', () => {
+        // At year 200 founding NPCs are ~199 years old — they die in simulation or via the
+        // serialization fallback. Either way the response must contain a death event.
+        db.getGlobalYear.mockReturnValue(200);
+
+        loadCoordinate(0, 0);
+        const chunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const deadNpcs = chunk.population.filter(npc => npc.dead === true);
+        expect(deadNpcs.length).toBeGreaterThan(0);
+        for (const npc of deadNpcs) {
+            const hasDeathEvent = npc.history.some(e => e.type === 'death' || e.type === 'child_death');
+            expect(hasDeathEvent).toBe(true);
+        }
+    });
+
+    test('computeDeathAge is deterministic and varies across NPC ids', () => {
+        const { computeDeathAge, MAX_NATURAL_LIFESPAN, MAX_LIFESPAN_VARIANCE } = require('../src/history');
+        const id = 'abc123def456';
+        expect(computeDeathAge(id)).toBe(computeDeathAge(id));
+        expect(computeDeathAge(id)).toBeGreaterThanOrEqual(MAX_NATURAL_LIFESPAN);
+        expect(computeDeathAge(id)).toBeLessThan(MAX_NATURAL_LIFESPAN + MAX_LIFESPAN_VARIANCE);
+        const differentId = '000000000000';
+        // Two ids shouldn't always produce the same death age (probabilistically guaranteed by the 10-year range)
+        const results = new Set(['abc123', 'def456', '111111', '222222', '333333', '444444'].map(computeDeathAge));
+        expect(results.size).toBeGreaterThan(1);
+    });
 });

@@ -4,6 +4,7 @@ const {
     SIZES,
     ATMOSPHERES,
     WALLS,
+    WALLS_BY_TIER,
     LANDMARKS,
     SURROUNDINGS,
     TERRAIN,
@@ -91,29 +92,85 @@ describe('generateTileDescription — atmosphere', () => {
 });
 
 describe('generateTileDescription — walls', () => {
-    test('tier 1, population < 5 → none', () => {
-        const result = generateTileDescription(makeTown({ tier: 1, population: 3 }), [], 'Plains', 1, 1);
-        expect(result.walls).toBe('none');
+    const ALL_BIOMES = ['Plains', 'Forest', 'Mountain', 'Desert', 'Marsh'];
+
+    test('walls value is always in WALLS allowlist across all tier/pop/biome combinations', () => {
+        for (const biome of ALL_BIOMES) {
+            for (let tier = 1; tier <= 5; tier++) {
+                for (const pop of [2, 8]) {
+                    const result = generateTileDescription(
+                        makeTown({ tier, population: pop }), [], biome, 1, 1
+                    );
+                    expect(WALLS).toContain(result.walls);
+                }
+            }
+        }
     });
-    test('tier 1, population >= 5 → timber palisade', () => {
-        const result = generateTileDescription(makeTown({ tier: 1, population: 8 }), [], 'Plains', 1, 1);
-        expect(result.walls).toBe('timber palisade');
+
+    test('walls is deterministic — same coordinate always returns same value', () => {
+        const town = makeTown({ tier: 1, population: 8 });
+        const a = generateTileDescription(town, [], 'Forest', 7, 13);
+        const b = generateTileDescription(town, [], 'Forest', 7, 13);
+        expect(a.walls).toBe(b.walls);
     });
-    test('tier 2 → stone walls', () => {
-        const result = generateTileDescription(makeTown({ tier: 2, population: 20 }), [], 'Plains', 1, 1);
-        expect(result.walls).toBe('stone walls');
+
+    test('walls vary across different coordinates at the same tier and biome', () => {
+        const walls = new Set();
+        for (let x = 0; x < 30; x++) {
+            const result = generateTileDescription(
+                makeTown({ tier: 1, population: 8 }), [], 'Plains', x, x * 3
+            );
+            walls.add(result.walls);
+        }
+        expect(walls.size).toBeGreaterThan(1);
     });
-    test('tier 3 → reinforced gatehouse', () => {
-        const result = generateTileDescription(makeTown({ tier: 3 }), [], 'Plains', 1, 1);
-        expect(result.walls).toBe('reinforced gatehouse');
+
+    test('tier 1 low-pop walls never appear when population >= 5', () => {
+        const lowPopPool = [
+            ...WALLS_BY_TIER['1_low'].default,
+            ...Object.values(WALLS_BY_TIER['1_low']).flat(),
+        ];
+        const anyPopPool = [
+            ...WALLS_BY_TIER['1_any'].default,
+            ...Object.values(WALLS_BY_TIER['1_any']).flat(),
+        ];
+        // Values exclusive to 1_low (not present in 1_any)
+        const exclusiveLowPop = lowPopPool.filter(v => !anyPopPool.includes(v));
+        for (let x = 0; x < 30; x++) {
+            const result = generateTileDescription(
+                makeTown({ tier: 1, population: 8 }), [], 'Plains', x, x
+            );
+            expect(exclusiveLowPop).not.toContain(result.walls);
+        }
     });
-    test('tier 4 → fortress ramparts', () => {
-        const result = generateTileDescription(makeTown({ tier: 4 }), [], 'Plains', 1, 1);
-        expect(result.walls).toBe('fortress ramparts');
+
+    test('tier 1 high-pop walls never appear when population < 5', () => {
+        const lowPopPool = [
+            ...WALLS_BY_TIER['1_low'].default,
+            ...Object.values(WALLS_BY_TIER['1_low']).flat(),
+        ];
+        const anyPopPool = [
+            ...WALLS_BY_TIER['1_any'].default,
+            ...Object.values(WALLS_BY_TIER['1_any']).flat(),
+        ];
+        // Values exclusive to 1_any (not present in 1_low)
+        const exclusiveHighPop = anyPopPool.filter(v => !lowPopPool.includes(v));
+        for (let x = 0; x < 30; x++) {
+            const result = generateTileDescription(
+                makeTown({ tier: 1, population: 2 }), [], 'Plains', x, x
+            );
+            expect(exclusiveHighPop).not.toContain(result.walls);
+        }
     });
-    test('tier 5 → fortress ramparts', () => {
-        const result = generateTileDescription(makeTown({ tier: 5 }), [], 'Plains', 1, 1);
-        expect(result.walls).toBe('fortress ramparts');
+
+    test('Mountain biome tier 2 walls always come from the Mountain pool', () => {
+        const mountainPool = WALLS_BY_TIER['2']['Mountain'];
+        for (let x = 0; x < 20; x++) {
+            const result = generateTileDescription(
+                makeTown({ tier: 2, population: 10 }), [], 'Mountain', x, x * 7
+            );
+            expect(mountainPool).toContain(result.walls);
+        }
     });
 });
 

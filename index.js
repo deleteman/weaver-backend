@@ -4,10 +4,10 @@ const { World } = require('miniplex');
 const seedrandom = require('seedrandom');
 
 const { Identity, Location, History, Knowledge, Inventory, Quests, Status, Political, Diplomacy } = require('./src/components');
-const { PoliticalEngine } = require('./src/politics'); 
+const { PoliticalEngine, CONQUEST_TYPES } = require('./src/politics');
 const { generateText } = require('./src/grammar');
 const { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, appendJournalEntry, getJournal } = require('./src/db');
-const { simulateHistory } = require('./src/history');
+const { simulateHistory, MAX_NATURAL_LIFESPAN, MAX_LIFESPAN_VARIANCE, computeDeathAge } = require('./src/history');
 const { generateQuests } = require('./src/quests');
 const actions = require('./src/actions'); 
 const { generateMiniMap, estimateTierFromTime, CLAIM_RADIUS_BY_TIER, DISTRICT_TYPES, getAdjacentTiles } = require('./src/map');
@@ -19,11 +19,10 @@ const crypto = require('crypto');
 const { log } = require('./src/logger');
 const { generateAppearance } = require('./src/appearance');
 const { generateTileDescription } = require('./src/tile-description');
-const { deterministicHash } = require('./src/event-utils');
+const { deterministicHash, makeEvent } = require('./src/event-utils');
 const { generateMerchantInventory } = require('./src/items');
 
 const MAX_FUTURE_YEARS = 500;
-const MAX_NATURAL_LIFESPAN = 80;
 const SEX_MALE_THRESHOLD = 0.48;
 const SEX_FEMALE_THRESHOLD = 0.96;
 
@@ -51,7 +50,7 @@ function generateTown(world, x, y, rng) {
         location: Location(x, y),
         history: { events: [] },
         currentMayor: "NPC",
-        political: Political(1, {}),
+        political: Political(estimateTierFromTime(x, y), {}),
         population: 0,
         regionalWealth: 500,
         primaryExport,
@@ -120,7 +119,7 @@ function injectImmigrantsAndApplyDeltas(world, x, y, townEntity, currentCoordina
             ?? ((data.arrivedYear ?? currentGlobalYear) - (data.ageAtArrival ?? data.age));
         const effectiveAge = currentGlobalYear - birthYear;
 
-        if (effectiveAge > MAX_NATURAL_LIFESPAN) {
+        if (effectiveAge > MAX_NATURAL_LIFESPAN + MAX_LIFESPAN_VARIANCE) {
             log(`Skipped immigrant ${data.name}: died of old age (age ${effectiveAge})`);
             continue;
         }
@@ -296,6 +295,38 @@ function loadAsDistrict(x, y, parentCoordinate) {
     // promoted a local NPC to Mayor, so we restore the authoritative parent value.
     districtEntity.currentMayor = parentMayor;
 
+    // Reconcile any NPC that simulation elevated to Mayor: their fate depends on how
+    // this tile was conquered. Annexation = executed; Subjugation = demoted to Puppet;
+    // organic expansion (no conquest delta) = demoted to Citizen.
+    const districtDeltas = getDeltas(currentCoordinate);
+    const conquestDelta = districtDeltas.find(d => d.entity_name === 'conquest' && d.state_key === 'conquest_type');
+    const conquestType = conquestDelta ? conquestDelta.state_value : null;
+
+    const localMayors = Array.from(
+        world.with('identity', 'currentRole', 'status', 'location')
+             .where(e => e.identity.type === 'NPC'
+                      && e.currentRole === 'Mayor'
+                      && e.status !== 'Dead'
+                      && e.location.x === x && e.location.y === y)
+    );
+    for (const npc of localMayors) {
+        if (conquestType === CONQUEST_TYPES.SUBJUGATION) {
+            npc.currentRole = 'Puppet';
+            saveDelta(currentCoordinate, npc.identity.id, 'currentRole', 'Puppet');
+            districtEntity.history.events.push(makeEvent(
+                `[Year 1] ${npc.identity.name} was reduced to a puppet administrator under ${parentCoordinate}.`,
+                'subjugation'
+            ));
+        } else {
+            npc.status = 'Dead';
+            saveDelta(currentCoordinate, npc.identity.id, 'status', 'Dead');
+            districtEntity.history.events.push(makeEvent(
+                `[Year 1] ${npc.identity.name} was executed when ${districtEntity.identity.name} was annexed.`,
+                'annexation'
+            ));
+        }
+    }
+
     // Apply any player-caused deltas (kills, steals, etc.) for this coordinate
     injectImmigrantsAndApplyDeltas(world, x, y, districtEntity, currentCoordinate);
 
@@ -459,12 +490,17 @@ function serializeChunk(x, y) {
         e.identity.type === "NPC"
     );
 
+    const DEPARTED_STATUSES = new Set(['Migrated', 'Exiled']);
     const currentGlobalYear = getGlobalYear();
     const npcData = Array.from(npcs).map(npc => {
         const currentAge = npc.birthYear != null
             ? currentGlobalYear - npc.birthYear
             : npc.age;
-        const isDead = npc.status === 'Dead' || currentAge > MAX_NATURAL_LIFESPAN;
+        const isDeparted = DEPARTED_STATUSES.has(npc.status);
+        const isDead = !isDeparted && (npc.status === 'Dead' || currentAge >= computeDeathAge(npc.identity.id));
+        const retroDeathEvent = (isDead && npc.status !== 'Dead')
+            ? [makeEvent(`[Year ${currentAge}] Died of old age.`, 'death')]
+            : [];
         return {
             id: npc.identity.id,
             name: npc.identity.name,
@@ -477,7 +513,7 @@ function serializeChunk(x, y) {
             inventory: npc.inventory ? npc.inventory.items : [],
             merchantInventory: npc.currentRole === 'Merchant' ? (npc.merchantInventory || []) : undefined,
             quests: npc.quests ? npc.quests.offeredQuests : [],
-            history: npc.history ? npc.history.events : [],
+            history: [...(npc.history ? npc.history.events : []), ...retroDeathEvent],
             memories: npc.knowledge ? npc.knowledge.memories : {}
         };
     });

@@ -11,6 +11,8 @@ const { MEMORY_STATES } = require('./history');
 
 const LOG_PREFIX = '[ACTION]';
 
+const RULER_TITLES = ['Mayor', 'King'];
+
 function actionLog(event, details = {}) {
     log(`${LOG_PREFIX} ${event}`, details);
 }
@@ -211,6 +213,7 @@ function assassinate(world, coordinate, targetId, playerState) {
     let successChance = 0.40 + (playerState.stats.strength * 0.05) + (playerState.stats.stealth * 0.05);
     if (targetNPC.currentRole === "Guard") successChance -= 0.30;
     if (targetNPC.currentRole === "Mayor") successChance -= 0.40;
+    if (targetNPC.currentRole === "Puppet") successChance -= 0.20;
 
     // Intentional non-deterministic player-experience roll — not a generation path
     if (Math.random() < successChance) {
@@ -222,7 +225,10 @@ function assassinate(world, coordinate, targetId, playerState) {
         let msg = `🗡️ You assassinated ${targetNPC.identity.name}!`;
         const leveled = awardXP(playerState, 75);
 
-        if (targetNPC.currentRole === "Mayor" && town.identity.type === "District") {
+        if (targetNPC.currentRole === "Puppet" && town.identity.type === "District") {
+            appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] The puppet administrator was slain. The parent city will appoint another.`, 'assassination'));
+            msg += ` The puppet administrator is dead. ${town.parentCity} will install a replacement — only deposing the parent ruler would change this district's fate.`;
+        } else if (targetNPC.currentRole === "Mayor" && town.identity.type === "District") {
             appendHistory(coordinate, town, makeEvent(`[Year ${currentYear}] A district administrator was slain by a traveler, but the parent city's rule endures.`, 'assassination'));
             msg += ` The district is briefly leaderless, but it remains under its parent city's authority.`;
         } else if (targetNPC.currentRole === "Mayor" && playerState.reputation >= 20) {
@@ -332,6 +338,10 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
                 questGiver.quests.offeredQuests = questGiver.quests.offeredQuests.filter(q => q !== heistQuest);
             }
 
+            if (fetchQuest) {
+                questGiver.quests.offeredQuests = questGiver.quests.offeredQuests.filter(q => q !== fetchQuest);
+            }
+
             const roleChanged = questGiver.currentRole !== roleBeforeEffect;
             if (roleChanged) {
                 saveDelta(coordinate, questGiver.identity.id, "currentRole", questGiver.currentRole);
@@ -381,6 +391,14 @@ function turnInQuest(world, coordinate, targetId, itemId, playerState) {
         if (avengedTargetName) {
             questGiver.knowledge.memories[avengedTargetId] = MEMORY_STATES.AVENGED;
             saveDelta(coordinate, questGiver.identity.id, `memory_${avengedTargetId}`, MEMORY_STATES.AVENGED);
+
+            const avengedQuest = questGiver.quests?.offeredQuests?.find(
+                q => q.type === QUEST_TYPES.BOUNTY && q.target === avengedTargetId
+            );
+            if (avengedQuest) {
+                questGiver.quests.offeredQuests = questGiver.quests.offeredQuests.filter(q => q !== avengedQuest);
+            }
+
             appendHistory(coordinate, questGiver, makeEvent(`[Year ${currentYear}] Was finally avenged when the traveler eliminated ${avengedTargetName}.`, 'assassination'));
 
             maybeAwardTitle(playerState, 'bountiesCompleted', 3, 'Master Assassin');
@@ -450,7 +468,7 @@ function claimThrone(world, coordinate, playerState) {
 function isMayor(world, playerState) {
     const town = world.with('identity').where(e => e.identity.type === "Town" || e.identity.type === "District").first;
     if (town.identity.type === "District") return false;
-    return (playerState.titles && playerState.titles[town.identity.name] === "Mayor");
+    return (playerState.titles && RULER_TITLES.includes(playerState.titles[town.identity.name]));
 }
 
 function taxTown(world, coordinate, playerState) {

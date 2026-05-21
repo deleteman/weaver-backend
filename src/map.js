@@ -98,8 +98,11 @@ function getTownRulerAndTier(x, y) {
         tier = estimateTierFromTime(x, y);
     }
 
-    return { ruler, tier };
+    return { ruler, tier, isDbConfirmed: !!politicalDelta };
 }
+
+// Settlement tier names for display — module-level so computeOwnership can reuse them
+const TIER_NAMES = ['Unknown', 'Town', 'SmallCity', 'FullCity', 'Magistrate', 'Kingdom'];
 
 /**
  * Generates metadata for a single tile without running full simulation
@@ -111,13 +114,11 @@ function getTownRulerAndTier(x, y) {
 function generateTileMetadata(x, y, discoveredCoordinates = new Set()) {
     const biome = determineBiome(x, y);
     const townName = generateTownName(x, y);
-    const { ruler, tier } = getTownRulerAndTier(x, y);
+    const { ruler, tier, isDbConfirmed } = getTownRulerAndTier(x, y);
     const isDiscovered = discoveredCoordinates.has(`${x},${y}`);
-    
-    // Settlement tier names for display
-    const tierNames = ['Unknown', 'Town', 'SmallCity', 'FullCity', 'Magistrate', 'Kingdom'];
-    const settlementType = tierNames[tier] || 'Town';
-    
+
+    const settlementType = TIER_NAMES[tier] || 'Town';
+
     // Territory size based on tier (used by UI for rendering)
     const territoryRadius = {
         1: 1,  // Town: 1x1
@@ -135,6 +136,7 @@ function generateTileMetadata(x, y, discoveredCoordinates = new Set()) {
         townName,
         ruler,
         tier,
+        isDbConfirmed,
         settlementType,
         territoryRadius,
         isDiscovered,
@@ -164,6 +166,8 @@ function computeOwnership(grid) {
         let ownerDist = Infinity;
 
         for (const candidate of grid) {
+            // Only DB-confirmed (visited) tiles can act as owners — matches findEstimatedParent()
+            if (!candidate.isDbConfirmed) continue;
             const claimRadius = CLAIM_RADIUS_BY_TIER[candidate.tier] || 0;
             const dist = Math.max(
                 Math.abs(tile.x - candidate.x),
@@ -199,6 +203,10 @@ function computeOwnership(grid) {
 
         return {
             ...tile,
+            // Districts are subordinate settlements — override inflated coordinate-seed tier
+            tier: 1,
+            settlementType: TIER_NAMES[1],
+            territoryRadius: 1,
             // Claimed tiles inherit the controlling settlement's ruler so the
             // frontend shows one consistent ruler across an entire territory.
             ruler: owner.ruler,
@@ -256,5 +264,6 @@ module.exports = {
     getAdjacentTiles,
     BIOME_TYPES,
     CLAIM_RADIUS_BY_TIER,
-    DISTRICT_TYPES
+    DISTRICT_TYPES,
+    TIER_NAMES,
 };

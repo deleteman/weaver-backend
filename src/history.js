@@ -48,6 +48,13 @@ const LOVE_MEMORY_INTENSITY = 9;
 const HATE_MEMORY_INTENSITY = 8;
 const GRIEF_MEMORY_INTENSITY = 7;
 
+const MAX_NATURAL_LIFESPAN = 80;
+const MAX_LIFESPAN_VARIANCE = 10;
+
+function computeDeathAge(npcId) {
+    return MAX_NATURAL_LIFESPAN + Math.floor(seedrandom(npcId + '_lifespan')() * MAX_LIFESPAN_VARIANCE);
+}
+
 const FATAL_EVENT_TYPES = new Set(['death', 'assassination', 'regicide', 'child_death']);
 
 const GRIEF_MESSAGES = {
@@ -499,6 +506,26 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                 continue;
             }
 
+            if (actor.age >= computeDeathAge(actor.identity.id)) {
+                propagate_memories(actor, livingNpcs, currentYear);
+                actor.status = "Dead";
+                const oldAgeDeathEvent = makeEvent(`[Year ${currentYear}] Died of old age.`, 'death');
+                pushEvent(actor, oldAgeDeathEvent);
+                log('history:death', { actorId: actor.identity.id, year: currentYear });
+                if (actor.inventory && actor.inventory.items.length > 0) {
+                    const heirs = livingNpcs.filter(n =>
+                        actor.knowledge.memories[n.identity.id] === MEMORY_STATES.LOVES ||
+                        actor.knowledge.memories[n.identity.id] === MEMORY_STATES.CHILD
+                    );
+                    if (heirs.length > 0) {
+                        heirs[0].inventory.items.push(...actor.inventory.items);
+                        pushEvent(heirs[0], makeEvent(`[Year ${currentYear}] Inherited belongings from the late ${actor.identity.name}.`, 'inheritance', buildCausedBySnapshot(oldAgeDeathEvent, actor.identity.name)));
+                        actor.inventory.items = [];
+                    }
+                }
+                continue;
+            }
+
             if (eventRoll >= 0.08 && eventRoll < 0.10) {
                 propagate_memories(actor, livingNpcs, currentYear);
                 actor.status = "Dead";
@@ -653,4 +680,4 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
     }
 }
 
-module.exports = { simulateHistory, MEMORY_STATES };
+module.exports = { simulateHistory, MEMORY_STATES, MAX_NATURAL_LIFESPAN, MAX_LIFESPAN_VARIANCE, computeDeathAge };

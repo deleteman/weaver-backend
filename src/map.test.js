@@ -9,7 +9,8 @@ const {
     estimateTierFromTime,
     BIOME_TYPES,
     CLAIM_RADIUS_BY_TIER,
-    DISTRICT_TYPES
+    DISTRICT_TYPES,
+    TIER_NAMES,
 } = require('./map');
 
 describe('Map Module - Fog of War Mini-Map Feature', () => {
@@ -173,6 +174,11 @@ describe('Map Module - Fog of War Mini-Map Feature', () => {
             expect(result).toHaveProperty('ruler');
             expect(result).toHaveProperty('tier');
         });
+
+        it('returns isDbConfirmed: false for an unvisited coordinate', () => {
+            const result = getTownRulerAndTier(999, 999);
+            expect(result.isDbConfirmed).toBe(false);
+        });
     });
 
     // ===== Mini-Map Tests =====
@@ -295,9 +301,9 @@ describe('Map Module - Fog of War Mini-Map Feature', () => {
 
     // ===== Ownership Tests =====
     describe('computeOwnership', () => {
-        function makeTile(x, y, tier, townName = `Town_${x}_${y}`, ruler = 'Unknown') {
+        function makeTile(x, y, tier, townName = `Town_${x}_${y}`, ruler = 'Unknown', isDbConfirmed = true) {
             return { x, y, tier, townName, ruler, biome: 'Forest', hasTown: true,
-                     settlementType: 'Town', territoryRadius: 1, isDiscovered: false };
+                     settlementType: 'Town', territoryRadius: 1, isDiscovered: false, isDbConfirmed };
         }
 
         it('should give every tile a claimedBy, claimedByName, and ruler field', () => {
@@ -440,6 +446,29 @@ describe('Map Module - Fog of War Mini-Map Feature', () => {
                 const dt = tile.districtType;
                 expect(dt === null || DISTRICT_TYPES.includes(dt)).toBe(true);
             }
+        });
+
+        it('district tile has tier:1, settlementType:"Town", territoryRadius:1 regardless of its own estimated tier', () => {
+            const grid = [
+                makeTile(0, 0, 5, 'Ironhaven'),
+                makeTile(2, 1, 3, 'Highburg'),  // tier:3 as if estimateTierFromTime inflated it
+            ];
+            const result = computeOwnership(grid);
+            const highburg = result.find(t => t.x === 2 && t.y === 1);
+            expect(highburg.claimedBy).toBe('world_X0_Y0');
+            expect(highburg.tier).toBe(1);
+            expect(highburg.settlementType).toBe(TIER_NAMES[1]);
+            expect(highburg.territoryRadius).toBe(1);
+        });
+
+        it('unconfirmed tile cannot act as an owner for neighboring tiles', () => {
+            const grid = [
+                makeTile(0, 0, 5, 'Ghost', 'Unknown', false),  // isDbConfirmed: false
+                makeTile(1, 0, 1, 'Hamlet'),
+            ];
+            const result = computeOwnership(grid);
+            const hamlet = result.find(t => t.x === 1 && t.y === 0);
+            expect(hamlet.claimedBy).toBeNull();
         });
     });
 

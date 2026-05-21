@@ -340,7 +340,7 @@ Response:
 
 ---
 
-## 13. Generational Bloodlines — Memory Inheritance & Faction Spawning
+## ~~13. Generational Bloodlines — Memory Inheritance & Faction Spawning~~ DONE
 **Difficulty**: Medium | **Impact**: High
 
 **What**: When an NPC dies, their high-intensity memories (loves, hates) must survive

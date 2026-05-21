@@ -15,6 +15,19 @@ const SETTLEMENT_TIERS = {
     Kingdom: 5         // 7x7
 };
 
+const CONQUEST_TYPES = {
+    ANNEXATION: 'annexation',
+    SUBJUGATION: 'subjugation'
+};
+
+const NPC_ROLES = {
+    MAYOR: 'Mayor',
+    PUPPET: 'Puppet',
+    GUARD: 'Guard',
+    HERO: 'Hero',
+    CITIZEN: 'Citizen'
+};
+
 class PoliticalEngine {
     /**
      * Claim adjacent tiles when a settlement expands
@@ -85,7 +98,7 @@ class PoliticalEngine {
      * Resolve conflict between two settlements
      * Returns outcome: 'crushing-victory', 'subjugation', or 'defeat'
      */
-    static resolveConflict(invader, target) {
+    static resolveConflict(invader, target, loserCoordinate = null) {
         const offenseScore = this.calculateOffenseScore(invader);
         const defenseScore = this.calculateDefenseScore(target);
         const margin = offenseScore - defenseScore;
@@ -119,6 +132,14 @@ class PoliticalEngine {
             };
         }
         
+        if (loserCoordinate) {
+            if (outcome === 'crushing-victory') {
+                saveDelta(loserCoordinate, 'conquest', 'conquest_type', CONQUEST_TYPES.ANNEXATION);
+            } else if (outcome === 'subjugation') {
+                saveDelta(loserCoordinate, 'conquest', 'conquest_type', CONQUEST_TYPES.SUBJUGATION);
+            }
+        }
+
         log('political:conflict-resolved', {
             offenseScore,
             defenseScore,
@@ -188,4 +209,4 @@ class PoliticalEngine {
     }
 }
 
-module.exports = { PoliticalEngine, SETTLEMENT_TIERS };
+module.exports = { PoliticalEngine, SETTLEMENT_TIERS, CONQUEST_TYPES, NPC_ROLES };
