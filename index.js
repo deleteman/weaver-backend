@@ -3,7 +3,7 @@ const express = require('express');
 const { World } = require('miniplex');
 const seedrandom = require('seedrandom');
 
-const { Identity, Location, History, Knowledge, Inventory, Quests, Status, Political, Diplomacy } = require('./src/components');
+const { Identity, Location, History, Knowledge, Inventory, Quests, Status, Political, Diplomacy, Memory } = require('./src/components');
 const { PoliticalEngine, CONQUEST_TYPES } = require('./src/politics');
 const { generateText } = require('./src/grammar');
 const { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, appendJournalEntry, getJournal } = require('./src/db');
@@ -91,7 +91,8 @@ function generateNPCs(world, x, y, rng, populationSize, townEntity) {
             inventory: { items: [] },
             quests: { offeredQuests: [] },
             history: { events: [] },
-            knowledge: { memories: {} }
+            knowledge: { memories: {} },
+            ...Memory()
         };
 
         if (role === 'Merchant' && townEntity) {

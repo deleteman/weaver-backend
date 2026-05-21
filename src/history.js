@@ -97,14 +97,10 @@ function canReproduce(actorSex, partnerSex) {
 }
 
 function propagate_memories(npc, livingNpcs, globalYear) {
-    const qualifying = (npc.memories || []).filter(m => m.intensity >= HIGH_INTENSITY_THRESHOLD);
-
-    for (const memory of qualifying) {
-        // Priority 1: direct children
+    function findHeir() {
         let heir = livingNpcs.find(n =>
             npc.knowledge.memories[n.identity.id] === 'child' && n.status === 'Alive'
         );
-        // Priority 2: grandchildren (children of children)
         if (!heir) {
             const children = livingNpcs.filter(n => npc.knowledge.memories[n.identity.id] === 'child');
             for (const child of children) {
@@ -114,7 +110,6 @@ function propagate_memories(npc, livingNpcs, globalYear) {
                 if (heir) break;
             }
         }
-        // Priority 3: same-location ally
         if (!heir) {
             heir = livingNpcs.find(n =>
                 n.status === 'Alive' &&
@@ -123,9 +118,14 @@ function propagate_memories(npc, livingNpcs, globalYear) {
                 npc.knowledge.memories[n.identity.id] === 'likes'
             );
         }
+        return heir;
+    }
 
+    // Pass 1: propagate direct memories (intensity >= HIGH_INTENSITY_THRESHOLD)
+    const qualifying = (npc.memories || []).filter(m => m.intensity >= HIGH_INTENSITY_THRESHOLD);
+    for (const memory of qualifying) {
+        const heir = findHeir();
         if (!heir || !heir.ancestralMemories) continue;
-
         const ancestralType = MEMORY_TYPE_MAP[memory.type] || 'ancestral_ally';
         const originEvent = `Inherited the ${memory.type} of their ancestor ${npc.identity.name}.`;
         heir.ancestralMemories.push({
@@ -134,11 +134,26 @@ function propagate_memories(npc, livingNpcs, globalYear) {
             intensity: Math.floor(memory.intensity / INHERITED_INTENSITY_DIVISOR),
             originYear: globalYear,
             originEvent,
-            inheritedFrom: {
-                npcId: npc.identity.id,
-                npcName: npc.identity.name,
-                year: globalYear,
-            },
+            inheritedFrom: { npcId: npc.identity.id, npcName: npc.identity.name, year: globalYear },
+        });
+    }
+
+    // Pass 2: re-propagate ancestral memories so chains survive past generation 1.
+    // Uses intensity >= 1 (not HIGH_INTENSITY_THRESHOLD) since ancestral values are already halved.
+    // Chain decay: 8 → 4 → 2 → 1 → terminates (floor(1/2) = 0).
+    const qualifyingAncestral = (npc.ancestralMemories || []).filter(am => am.intensity >= 1);
+    for (const am of qualifyingAncestral) {
+        const heir = findHeir();
+        if (!heir || !heir.ancestralMemories) continue;
+        const newIntensity = Math.floor(am.intensity / INHERITED_INTENSITY_DIVISOR);
+        if (newIntensity < 1) continue;
+        heir.ancestralMemories.push({
+            type: am.type,
+            targetLineage: am.targetLineage,
+            intensity: newIntensity,
+            originYear: globalYear,
+            originEvent: `Inherited ancestral memory from ${npc.identity.name}.`,
+            inheritedFrom: { npcId: npc.identity.id, npcName: npc.identity.name, year: globalYear },
         });
     }
 }
@@ -338,7 +353,7 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                     const threshold = (am.type === 'blood_feud' || am.type === 'ancestral_ally')
                         ? ANCESTRAL_BOND_MIN_YEARS
                         : DEBT_HOUSE_MIN_YEARS;
-                    if (yearsActive <= threshold) continue;
+                    if (yearsActive < threshold) continue;
                     const groupKey = `${am.type}::${am.targetLineage}`;
                     if (!feudGroups[groupKey]) feudGroups[groupKey] = { type: am.type, targetLineage: am.targetLineage, npcs: [] };
                     feudGroups[groupKey].npcs.push(npc);

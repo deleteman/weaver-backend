@@ -1195,5 +1195,95 @@ describe('History Simulation', () => {
             // economicBoomYear should have been nulled by mourning suppression
             expect(town.economicModifiers.economicBoomYear).toBeNull();
         });
+
+        test('founding NPC with Memory() spread has memories and ancestralMemories arrays', () => {
+            // Regression guard: before the fix, generateNPCs() omitted ...Memory() so founding
+            // NPCs had no memories[] or ancestralMemories[], causing silent data loss everywhere.
+            // This test verifies the Memory() component shape is correct for seeding.
+            const { Memory } = require('./components');
+            const mem = Memory();
+            expect(Array.isArray(mem.memories)).toBe(true);
+            expect(Array.isArray(mem.ancestralMemories)).toBe(true);
+            expect(mem.memories).toHaveLength(0);
+            expect(mem.ancestralMemories).toHaveLength(0);
+
+            // A NPC created with ...Memory() receives both arrays and can accept pushes
+            const npc = addNpcWithMemory(world, 'founding-guard-npc');
+            expect(Array.isArray(npc.memories)).toBe(true);
+            expect(Array.isArray(npc.ancestralMemories)).toBe(true);
+            npc.memories.push({ type: 'hate', targetId: 'x', intensity: 8, year: 1 });
+            expect(npc.memories).toHaveLength(1);
+        });
+
+        test('ancestralMemory re-propagates from gen1 to gen2 (multi-generation chain)', () => {
+            // gen1 has only an ancestralMemory (intensity 4) — no direct memories.
+            // With the Bug 2 fix, propagate_memories() now also walks ancestralMemories
+            // so dying gen1 should pass intensity 2 to its gen2 child.
+            const gen1 = addNpcWithMemory(world, 'gen1-npc', [], [
+                { type: 'blood_feud', targetLineage: 'rival-gen', intensity: 4,
+                  originYear: 1, originEvent: 'Inherited from gen0.', inheritedFrom: null }
+            ]);
+            const gen2 = addNpcWithMemory(world, 'gen2-npc');
+            gen1.knowledge.memories['gen2-npc'] = 'child';
+
+            // RNG: immigration roll (0.5=no), gen1 roll (0.09=random death), cause pick (0.5), gen2 roll (0.5)
+            rng = makeRng([0.5, 0.5, 0.09, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            expect(gen1.status).toBe('Dead');
+            const inherited = gen2.ancestralMemories.find(
+                am => am.type === 'blood_feud' && am.targetLineage === 'rival-gen'
+            );
+            expect(inherited).toBeDefined();
+            expect(inherited.intensity).toBe(2); // floor(4 / 2)
+            expect(inherited.inheritedFrom.npcId).toBe('gen1-npc');
+        });
+
+        test('ancestralMemory chain reaches gen3 with intensity 1, terminates at gen4', () => {
+            // Chain: gen2 intensity=2 → gen3 intensity=1 → gen4 gets nothing (floor(1/2)=0)
+            const gen2 = addNpcWithMemory(world, 'gen2-chain', [], [
+                { type: 'blood_feud', targetLineage: 'chain-lineage', intensity: 2,
+                  originYear: 1, originEvent: 'Inherited from gen1.', inheritedFrom: null }
+            ]);
+            const gen3 = addNpcWithMemory(world, 'gen3-chain');
+            gen2.knowledge.memories['gen3-chain'] = 'child';
+
+            rng = makeRng([0.5, 0.5, 0.09, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            expect(gen2.status).toBe('Dead');
+            const gen3Mem = gen3.ancestralMemories.find(am => am.type === 'blood_feud');
+            expect(gen3Mem).toBeDefined();
+            expect(gen3Mem.intensity).toBe(1); // floor(2 / 2)
+
+            // Now kill gen3 — chain should terminate because floor(1/2) = 0
+            const gen4 = addNpcWithMemory(world, 'gen4-chain');
+            gen3.knowledge.memories['gen4-chain'] = 'child';
+
+            rng = makeRng([0.5, 0.5, 0.09, 0.5, 0.5]);
+            simulateHistory(world, rng, 0, 0, 1);
+
+            expect(gen3.status).toBe('Dead');
+            expect(gen4.ancestralMemories).toHaveLength(0);
+        });
+
+        test('faction spawns when ancestralMemory is exactly 50 years old (off-by-one boundary)', () => {
+            // originYear=10, first decade tick at year 60: yearsActive = 60 - 10 = 50.
+            // Old bug: `<= 50` would SKIP this (50 <= 50 is true). Fixed: `< 50` passes it through.
+            const town = world.with('identity', 'currentMayor').where(e => e.identity.type === 'Town').first;
+            addEconomicsTownFields(town);
+
+            const amAtBoundary = { type: 'blood_feud', targetLineage: 'boundary-lineage', intensity: 4,
+                                   originYear: 10, originEvent: 'test', inheritedFrom: null };
+            addNpcWithMemory(world, 'npc-boundary-1', [], [{ ...amAtBoundary }]);
+            addNpcWithMemory(world, 'npc-boundary-2', [], [{ ...amAtBoundary }]);
+            addNpcWithMemory(world, 'npc-boundary-3', [], [{ ...amAtBoundary }]);
+
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 60); // first decade check fires at year 60, yearsActive=50
+
+            const factions = Array.from(world.with('identity').where(e => e.identity.type === 'Faction'));
+            expect(factions.length).toBeGreaterThanOrEqual(1);
+        });
     });
 });
