@@ -1,6 +1,6 @@
 // src/history.test.js
 const { World } = require('miniplex');
-const { simulateHistory } = require('./history');
+const { simulateHistory, checkMythosLegend } = require('./history');
 
 // Mock the db module to avoid database calls
 jest.mock('./db', () => ({
@@ -298,7 +298,7 @@ describe('History Simulation', () => {
     test('simulateHistory should not allow Mayors to migrate', () => {
         const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
         npc.currentRole = 'Mayor';
-        
+
         let eventCount = 0;
         rng = () => {
             eventCount++;
@@ -309,6 +309,152 @@ describe('History Simulation', () => {
         simulateHistory(world, rng, 0, 0, 1);
 
         expect(npc.currentRole).toBe('Mayor');
+    });
+
+    test('simulateHistory should not allow Kings to migrate', () => {
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.political = { tier: 5 };
+        const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        npc.currentRole = 'King';
+
+        let eventCount = 0;
+        rng = () => {
+            eventCount++;
+            if (eventCount === 1) return 0.39; // Migration event
+            return 0.5;
+        };
+
+        simulateHistory(world, rng, 0, 0, 1);
+
+        expect(npc.currentRole).toBe('King');
+        expect(npc.status).not.toBe('Migrated');
+    });
+
+    test('simulateHistory assigns tier-5 ruler title King on career shift', () => {
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.political = { tier: 5 };
+
+        const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        npc.currentRole = 'Citizen';
+
+        let callCount = 0;
+        rng = () => {
+            callCount++;
+            if (callCount === 1) return 0.5; // skip immigration
+            if (callCount === 2) return 0.15; // career shift
+            // job selection: index must land on 'King' (index 1 in the 7-item list for tier-5)
+            // "Beggar"=0, "King"=1 → rng * 7 = 1.something → rng ≈ 0.15 (but filter removes current role)
+            // We just assert the result is a valid ruler or any role — the exact roll depends on order.
+            // Use 0.15 which maps to index 1 after filtering 'Citizen' (list stays the same length):
+            // ["Beggar","King","Cultist","Bandit","Merchant","Scholar","Guard"] → index 1 = "King"
+            if (callCount === 3) return 0.15;
+            return 0.5;
+        };
+
+        simulateHistory(world, rng, 0, 0, 1);
+
+        // The NPC should have become the King (tier-5 title)
+        const updatedNpc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        expect(updatedNpc.currentRole).toBe('King');
+        expect(updatedNpc.history.events.some(e => e.type === 'power_seizure')).toBe(true);
+    });
+
+    test('simulateHistory assigns Lord as ruler title for tier-3 settlement', () => {
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.political = { tier: 3 };
+
+        const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        npc.currentRole = 'Citizen';
+
+        let callCount = 0;
+        rng = () => {
+            callCount++;
+            if (callCount === 1) return 0.5; // skip immigration
+            if (callCount === 2) return 0.15; // career shift
+            if (callCount === 3) return 0.15; // index 1 = "Lord"
+            return 0.5;
+        };
+
+        simulateHistory(world, rng, 0, 0, 1);
+
+        const updatedNpc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        expect(updatedNpc.currentRole).toBe('Lord');
+    });
+
+    test('simulateHistory does not assign ruler role in a District', () => {
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.identity.type = 'District';
+        town.political = { tier: 1 };
+
+        const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        npc.currentRole = 'Citizen';
+
+        // Force career shift to land on index 0 = 'Beggar' (Mayor/ruler removed from list for Districts)
+        let callCount = 0;
+        rng = () => {
+            callCount++;
+            if (callCount === 1) return 0.5;
+            if (callCount === 2) return 0.15; // career shift
+            if (callCount === 3) return 0.01; // first item in potentialJobs = 'Beggar'
+            return 0.5;
+        };
+
+        simulateHistory(world, rng, 0, 0, 1);
+
+        const updatedNpc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        // Should have a non-ruler role — whatever job was first in the District list
+        expect(['Mayor', 'Lord', 'Magistrate', 'King']).not.toContain(updatedNpc.currentRole);
+    });
+
+    test('power seizure sets currentRole to ruler title on the seizing NPC', () => {
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.political = { tier: 3 }; // FullCity → Lord
+
+        const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        npc.currentRole = 'Citizen';
+        npc.age = 25;
+
+        // Force career shift landing on 'Lord' (index 1 in tier-3 potentialJobs)
+        let callCount = 0;
+        rng = () => {
+            callCount++;
+            if (callCount === 1) return 0.5; // skip immigration
+            if (callCount === 2) return 0.15; // career shift
+            if (callCount === 3) return 0.15; // index 1 = 'Lord'
+            return 0.5;
+        };
+
+        simulateHistory(world, rng, 0, 0, 1);
+
+        const updatedNpc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        expect(updatedNpc.currentRole).toBe('Lord');
+    });
+
+    test('career shift away from ruler role clears currentMayor to "None"', () => {
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.political = { tier: 1 };
+        town.currentMayor = 'Test NPC'; // pre-assign as ruler
+
+        const npc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        npc.currentRole = 'Mayor';
+        npc.age = 25;
+
+        // Force career shift to Beggar (index 0), not Mayor
+        let callCount = 0;
+        rng = () => {
+            callCount++;
+            if (callCount === 1) return 0.5; // skip immigration
+            if (callCount === 2) return 0.15; // career shift
+            if (callCount === 3) return 0.0;  // index 0 = 'Beggar'
+            return 0.5;
+        };
+
+        simulateHistory(world, rng, 0, 0, 1);
+
+        const updatedTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+        const updatedNpc = world.with('identity').where(e => e.identity.id === 'test-npc').first;
+        expect(updatedNpc.currentRole).toBe('Beggar');
+        expect(updatedTown.currentMayor).toBe('None');
     });
 
     test('simulateHistory should inherit items to heirs on death', () => {
@@ -1284,6 +1430,172 @@ describe('History Simulation', () => {
 
             const factions = Array.from(world.with('identity').where(e => e.identity.type === 'Faction'));
             expect(factions.length).toBeGreaterThanOrEqual(1);
+        });
+    });
+
+    describe('Folklore & Mythos System (Item 14)', () => {
+        const { getDeltas } = require('./db');
+
+        function addMythTown(w, mythos = {}) {
+            const t = w.with('identity', 'currentMayor').where(e => e.identity.type === 'Town').first;
+            t.political = { tier: 2, demographics: {}, stance: 'Balanced' };
+            t.population = 5;
+            t.regionalWealth = 1000;
+            t.primaryExport = 'Grain';
+            t.tradePartners = [];
+            t.history = { events: [] };
+            t.economicModifiers = { shortage: false, hyperinflation: false, hyperinflationExpiryYear: null, economicBoomYear: null };
+            t.mythos = { temporalExposure: 0, activeLegend: null, cultFaction: null, fearModifier: 0, titheAccumulated: 0, ...mythos };
+            return t;
+        }
+
+        beforeEach(() => {
+            getDeltas.mockReturnValue([]);
+        });
+
+        test('exposure > 50 with majority violent deltas → shadow legend and fearModifier 2.0', () => {
+            const town = addMythTown(world, { temporalExposure: 51 });
+            getDeltas.mockReturnValue([
+                { state_key: 'assassinated_leader', state_value: 'true', entity_name: 'town-id' },
+                { state_key: 'assassinated_leader', state_value: 'true', entity_name: 'town-id' },
+            ]);
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 10);
+            expect(town.mythos.activeLegend).toBe('shadow');
+            expect(town.mythos.fearModifier).toBe(2.0);
+        });
+
+        test('exposure > 50 with majority benevolent deltas → savior legend and Cult faction spawned', () => {
+            const town = addMythTown(world, { temporalExposure: 51 });
+            getDeltas.mockReturnValue([
+                { state_key: 'capsule_abc', state_value: '{}', entity_name: 'town-id' },
+                { state_key: 'capsule_def', state_value: '{}', entity_name: 'town-id' },
+            ]);
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 10);
+            expect(town.mythos.activeLegend).toBe('savior');
+            expect(town.mythos.cultFaction).toBeTruthy();
+            const cults = Array.from(world.with('identity', 'factionType').where(e => e.factionType === 'savior_cult'));
+            expect(cults.length).toBeGreaterThanOrEqual(1);
+        });
+
+        test('benevolent legend links to existing ancestral_reverence Mystery Cult instead of spawning new', () => {
+            const town = addMythTown(world, { temporalExposure: 51 });
+            const existingCultId = 'existing-cult-id';
+            world.add({
+                identity: { type: 'Faction', id: existingCultId, name: 'Old Cult' },
+                location: { x: 0, y: 0 },
+                factionType: 'ancestral_reverence',
+                members: [],
+                history: { events: [] },
+                foundedYear: 1,
+            });
+            getDeltas.mockReturnValue([
+                { state_key: 'capsule_abc', state_value: '{}', entity_name: 'town-id' },
+            ]);
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 10);
+            expect(town.mythos.cultFaction).toBe(existingCultId);
+            const saviorCults = Array.from(world.with('identity', 'factionType').where(e => e.factionType === 'savior_cult'));
+            expect(saviorCults.length).toBe(0);
+        });
+
+        test('exposure at 49 (below threshold) does NOT generate a legend', () => {
+            const town = addMythTown(world, { temporalExposure: 49 });
+            getDeltas.mockReturnValue([
+                { state_key: 'assassinated_leader', state_value: 'true', entity_name: 'town-id' },
+            ]);
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 10);
+            expect(town.mythos.activeLegend).toBeNull();
+        });
+
+        test('erosion_check: after 100 years with no visits, temporalExposure decreases by 50', () => {
+            // exposure=60, lastVisit=0, currentYear=100 → yearsSince=100, periods=2, decay=50 → exposure=10
+            const town = addMythTown(world, { temporalExposure: 60, activeLegend: 'shadow', fearModifier: 2.0 });
+            getDeltas.mockReturnValue([
+                { state_key: 'last_visit_year', state_value: '0', entity_name: 'town-id' },
+            ]);
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 100);
+            // After erosion: exposure 60 - 50 = 10 → below disband threshold (20) → legend cleared
+            expect(town.mythos.temporalExposure).toBe(10);
+        });
+
+        test('erosion_check: temporalExposure below 20 disbands cult and nulls activeLegend', () => {
+            const town = addMythTown(world, { temporalExposure: 30, activeLegend: 'shadow', fearModifier: 2.0, cultFaction: 'some-cult' });
+            // lastVisit=0, year=100 → decay 50 → exposure=0 < 20 → disband
+            getDeltas.mockReturnValue([
+                { state_key: 'last_visit_year', state_value: '0', entity_name: 'town-id' },
+            ]);
+            rng = makeRng(Array(200).fill(0.5));
+            simulateHistory(world, rng, 0, 0, 10, 100);
+            expect(town.mythos.activeLegend).toBeNull();
+            expect(town.mythos.cultFaction).toBeNull();
+            expect(town.mythos.fearModifier).toBe(1);
+        });
+
+        test('tithe accumulates when Savior cult is active', () => {
+            // regionalWealth=1000, 2 decades since visit → tithe = 1000 * 0.05 * 2 = 100
+            const town = addMythTown(world, { activeLegend: 'savior', cultFaction: 'cult-id', titheAccumulated: 0 });
+            getDeltas.mockReturnValue([
+                { state_key: 'last_visit_year', state_value: '80', entity_name: 'town-id' },
+            ]);
+            rng = makeRng(Array(200).fill(0.5));
+            // Run 10 years starting at year 100 → first decade tick at year 100
+            // lastVisitYear=80, globalYear=100, decadesSinceVisit = floor((100-80)/10) = 2
+            simulateHistory(world, rng, 0, 0, 10, 100);
+            expect(town.mythos.titheAccumulated).toBe(100);
+        });
+
+        describe('checkMythosLegend (post-delta activation)', () => {
+            test('activates shadow legend when temporalExposure > 50 and no benevolent deltas', () => {
+                const town = addMythTown(world, { temporalExposure: 106 });
+                // No violent or benevolent deltas → tie → shadow
+                checkMythosLegend(world, town, 'world_X0_Y0', [], 106, 0, 0, () => {});
+                expect(town.mythos.activeLegend).toBe('shadow');
+                expect(town.mythos.fearModifier).toBe(2.0);
+            });
+
+            test('activates shadow legend when violent deltas outnumber benevolent', () => {
+                const town = addMythTown(world, { temporalExposure: 106 });
+                const deltas = [
+                    { state_key: 'assassinated_leader', state_value: 'true', entity_name: 'town-id' },
+                    { state_key: 'capsule_gold', state_value: '{}', entity_name: 'town-id' },
+                    { state_key: 'assassinated_leader', state_value: 'true', entity_name: 'town-id' },
+                ];
+                checkMythosLegend(world, town, 'world_X0_Y0', deltas, 106, 0, 0, () => {});
+                expect(town.mythos.activeLegend).toBe('shadow');
+                expect(town.mythos.fearModifier).toBe(2.0);
+            });
+
+            test('activates savior legend when benevolent deltas outnumber violent', () => {
+                const town = addMythTown(world, { temporalExposure: 106 });
+                const deltas = [
+                    { state_key: 'capsule_gold', state_value: '{}', entity_name: 'town-id' },
+                    { state_key: 'capsule_tome', state_value: '{}', entity_name: 'town-id' },
+                ];
+                checkMythosLegend(world, town, 'world_X0_Y0', deltas, 106, 0, 0, () => {});
+                expect(town.mythos.activeLegend).toBe('savior');
+                expect(town.mythos.cultFaction).toBeTruthy();
+            });
+
+            test('does nothing when temporalExposure is at threshold (not above)', () => {
+                const town = addMythTown(world, { temporalExposure: 50 });
+                checkMythosLegend(world, town, 'world_X0_Y0', [], 50, 0, 0, () => {});
+                expect(town.mythos.activeLegend).toBeNull();
+            });
+
+            test('does nothing when legend is already set', () => {
+                const town = addMythTown(world, { temporalExposure: 106, activeLegend: 'shadow', fearModifier: 2.0 });
+                // Would switch to savior if the guard wasn't there
+                const deltas = [
+                    { state_key: 'capsule_gold', state_value: '{}', entity_name: 'town-id' },
+                    { state_key: 'capsule_gold', state_value: '{}', entity_name: 'town-id' },
+                ];
+                checkMythosLegend(world, town, 'world_X0_Y0', deltas, 106, 0, 0, () => {});
+                expect(town.mythos.activeLegend).toBe('shadow'); // unchanged
+            });
         });
     });
 });

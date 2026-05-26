@@ -1,7 +1,7 @@
 // src/map.js
 const seedrandom = require('seedrandom');
 const { generateText } = require('./grammar');
-const { getDeltas, getGlobalYear } = require('./db');
+const { getDeltas, getGlobalYear, getParentCity } = require('./db');
 const { generateTileLightDescription } = require('./tile-description');
 
 /**
@@ -70,6 +70,12 @@ function estimateTierFromTime(x, y, globalYear = null) {
  * Gets the current ruler and tier of a town at a coordinate.
  * For visited coordinates, reads from the delta DB. For unvisited coordinates,
  * estimates tier from global time and the coordinate seed.
+ *
+ * District tiles never store a currentMayor delta of their own (unloadCoordinate
+ * intentionally skips it to avoid stale overwrite of the parent's authoritative value).
+ * When no currentMayor delta is found, we fall back to the parent city's delta via
+ * getParentCity. We also force tier = 1 for districts so they don't masquerade as
+ * high-tier owners in computeOwnership and incorrectly claim territory.
  */
 function getTownRulerAndTier(x, y) {
     const currentCoordinate = `world_X${x}_Y${y}`;
@@ -78,19 +84,26 @@ function getTownRulerAndTier(x, y) {
     const mayorDelta = deltas.find(d => d.state_key === 'currentMayor');
     const politicalDelta = deltas.find(d => d.state_key === 'political');
 
-    let ruler = 'Unknown';
-    let tier;
+    // Detect district tiles: they have a DB-confirmed parent city written by unloadCoordinate.
+    const parentCoordinate = getParentCity(currentCoordinate);
 
+    let ruler = 'Unknown';
     if (mayorDelta) {
         ruler = mayorDelta.state_value;
+    } else if (parentCoordinate) {
+        const parentDeltas = getDeltas(parentCoordinate);
+        const parentMayorDelta = parentDeltas.find(d => d.state_key === 'currentMayor');
+        if (parentMayorDelta) ruler = parentMayorDelta.state_value;
     }
 
+    let tier;
     if (politicalDelta) {
         try {
             const political = JSON.parse(politicalDelta.state_value);
-            const savedTier = political.tier || 1;
-            // Take max of saved tier and time-based estimate in case time has advanced since last visit
-            tier = Math.max(savedTier, estimateTierFromTime(x, y));
+            // Districts inherit the parent's tier in their political delta, but must never
+            // act as high-tier territory owners in computeOwnership — force tier 1.
+            const effectiveTier = parentCoordinate ? 1 : (political.tier || 1);
+            tier = parentCoordinate ? 1 : Math.max(effectiveTier, estimateTierFromTime(x, y));
         } catch (e) {
             tier = estimateTierFromTime(x, y);
         }

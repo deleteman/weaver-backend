@@ -1,5 +1,5 @@
 // src/politics.test.js
-const { PoliticalEngine, CONQUEST_TYPES } = require('./politics');
+const { PoliticalEngine, CONQUEST_TYPES, getRulerTitle, TIER_RULER_TITLES } = require('./politics');
 
 jest.mock('./db', () => ({
     saveDelta: jest.fn(),
@@ -134,6 +134,37 @@ describe('PoliticalEngine', () => {
 
         test('SUBJUGATION is defined and equals "subjugation"', () => {
             expect(CONQUEST_TYPES.SUBJUGATION).toBe('subjugation');
+        });
+    });
+
+    describe('getRulerTitle', () => {
+        test('returns Mayor for tier 1 (Town)', () => {
+            expect(getRulerTitle(1)).toBe('Mayor');
+        });
+
+        test('returns Mayor for tier 2 (SmallCity)', () => {
+            expect(getRulerTitle(2)).toBe('Mayor');
+        });
+
+        test('returns Lord for tier 3 (FullCity)', () => {
+            expect(getRulerTitle(3)).toBe('Lord');
+        });
+
+        test('returns Magistrate for tier 4', () => {
+            expect(getRulerTitle(4)).toBe('Magistrate');
+        });
+
+        test('returns King for tier 5 (Kingdom)', () => {
+            expect(getRulerTitle(5)).toBe('King');
+        });
+
+        test('defaults to Mayor for unknown tier', () => {
+            expect(getRulerTitle(99)).toBe('Mayor');
+            expect(getRulerTitle(undefined)).toBe('Mayor');
+        });
+
+        test('TIER_RULER_TITLES covers all 5 tiers', () => {
+            expect(Object.keys(TIER_RULER_TITLES).map(Number)).toEqual([1, 2, 3, 4, 5]);
         });
     });
 });

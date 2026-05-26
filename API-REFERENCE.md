@@ -21,7 +21,7 @@ Every action endpoint receives and returns this object. Initialize it for new pl
 }
 ```
 
-`titles` is a map of `{ "TownName": "Mayor" }` or `{ "Global": "Master Thief" }`.
+`titles` is a map of `{ "TownName": "Mayor" | "Lord" | "Magistrate" | "King" }` or `{ "Global": "Master Thief" }`. The ruler title value matches the settlement's tier at the time the player claimed leadership (see Ruler Titles in the PRD).
 
 `reputation` is the flat backward-compatible score. `reputationMap` is a coordinate-keyed map (`{ "world_X2_Y3": 50 }`) tracking per-location standing. All action endpoints populate both fields. For colony tiles, a portion of the reputation delta is propagated to the suzerain's entry in `reputationMap`.
 
@@ -120,7 +120,8 @@ Full 4-pass world load for a coordinate.
 
 **Town tiers:** 1=Town, 2=SmallCity, 3=FullCity, 4=Magistrate, 5=Kingdom  
 **NPC statuses:** `"Alive"`, `"Dead"`, `"Exiled"`, `"Migrated"`  
-**NPC roles:** Guard, Mayor, Hero, Scholar, Merchant, Blacksmith, Bandit, Cultist, Beggar, Citizen, Exile
+**NPC roles:** Guard, Mayor, Lord, Magistrate, King, Hero, Scholar, Merchant, Blacksmith, Bandit, Cultist, Beggar, Citizen, Exile, Puppet, Child  
+**Ruler roles (tier-gated):** Mayor (tier 1–2), Lord (tier 3), Magistrate (tier 4), King (tier 5). These are the only roles that appear as `rulerTitle` and are accepted as valid targets for regicide.
 
 **`population[]` NPC object fields:**
 
@@ -293,7 +294,8 @@ Role → clothing tier mapping: Mayor/Scholar → noble; Guard → military; Cul
 | `type` | `"Town"` \| `"District"` | `"District"` when the tile is claimed by a neighbouring higher-tier settlement |
 | `districtType` | string \| null | District flavour (`"Market"`, `"Slums"`, `"Keep"`, `"Barracks"`, `"Temple"`). `null` for Towns. |
 | `parentCity` | string \| null | Coordinate key of the controlling settlement (e.g. `"world_X2_Y1"`). `null` for independent Towns. |
-| `ruler` | string | Current mayor/ruler — inherited from the parent city for Districts |
+| `ruler` | string | Current ruler's name (or `"NPC"` / `"The Player"`) — inherited from the parent city for Districts |
+| `rulerTitle` | string | Title matching the settlement's tier: `"Mayor"` (tier 1–2), `"Lord"` (tier 3), `"Magistrate"` (tier 4), `"King"` (tier 5) |
 | `tier` | number | Political tier of the controlling settlement (inherited by Districts) |
 | `population` | number | Number of living NPCs at this location |
 | `history` | string[] | Chronological event log |
@@ -301,6 +303,7 @@ Role → clothing tier mapping: Mayor/Scholar → noble; Guard → military; Cul
 | `primaryExport` | string | Deterministic export good derived from biome (e.g. `"Iron"`, `"Grain"`, `"Spice"`) |
 | `tradePartners` | string[] | Coordinate keys of active trade partners (non-empty for Tier 3+ settlements; may shrink if partners become Ruins) |
 | `economicModifiers` | object | `{ shortage: bool, hyperinflation: bool, hyperinflationExpiryYear: number\|null, economicBoomYear: number\|null }` |
+| `mythos` | object | `{ temporalExposure: number, activeLegend: 'shadow'\|'savior'\|null, cultFaction: string\|null, fearModifier: number, titheAccumulated: number }`. `temporalExposure` accumulates from player actions (steal +3, assassinate +20, quest/trade +5, bury capsule/gift +10). `activeLegend` is set on the **first chunk load** where `temporalExposure > 50` (via a post-delta check after the Delta Pass), not only during `advance_time` runs. Shadow legend sets `fearModifier` to `2.0` (doubles Merchant buy prices, halves sell prices). Savior legend spawns a `savior_cult` Faction and sets `cultFaction` to its ID. `fearModifier` defaults to `1` (neutral); it returns to `1` when the legend is disbanded (erosion drops `temporalExposure` below 20 after 50+ years without a visit). `titheAccumulated` is gold accrued by an active Savior cult at 5% of `regionalWealth` per decade, applied during `advance_time`. |
 
 ---
 
@@ -331,6 +334,102 @@ Full chronological event log for a coordinate. Runs the full 4-pass pipeline.
 ```
 
 Each timeline entry is an object with `actor` (entity name), `text` (event text without the year prefix), `id` (event ID or `null` for legacy rows), `type`, and `causedBy`.
+
+---
+
+### `GET /api/chunk/:x/:y/chronicle/summary`
+
+Structured narrative analysis of the settlement's chronicle. Two focus modes available via `?focus=`.
+
+**Query parameters:**
+
+| Parameter | Required | Values | Description |
+|-----------|----------|--------|-------------|
+| `focus` | Yes | `ruler`, `person` | Which summary type to produce |
+| `name` | When `focus=person` | Any string | Exact NPC name to summarize |
+
+---
+
+#### `?focus=ruler` — Political History
+
+Traces every ruler, their tenure, how they gained and lost power, and detects turbulent years.
+
+**Response:**
+```json
+{
+  "type": "ruler_history",
+  "rulers": [
+    {
+      "name": "Sylas Deepforge",
+      "title": "Magistrate",
+      "seizedPowerYear": 4,
+      "leftOfficeYear": 13,
+      "tenure": 9,
+      "leftOfficeReason": "ousted",
+      "oustedBy": "Lysander Coppergate",
+      "diedInOffice": null,
+      "fateAfterOffice": { "year": 34, "cause": "passed away peacefully in their sleep." },
+      "notableEventsWhileRuling": [
+        { "year": 6, "text": "Discovered The Ethereal Scroll in the wilderness.", "type": "artifact_discovery" }
+      ]
+    }
+  ],
+  "turbulentYears": [
+    { "year": 24, "rulerCount": 3, "description": "3 rulers seized power in Year 24" }
+  ]
+}
+```
+
+`leftOfficeReason` values: `"ousted"`, `"abdicated"`, `"claimed_empty_throne"`, `"died_in_office"`, `"still_ruling"`, `"unknown"`.
+
+---
+
+#### `?focus=person&name=NAME` — Biographical Summary
+
+Returns a biographical summary for a specific NPC, including a recursive lineage tree (up to 4 generations in both directions).
+
+**Response:**
+```json
+{
+  "type": "person_summary",
+  "name": "Grom Marshborn",
+  "lifespan": { "arrivedYear": 10, "diedYear": null, "cause": null },
+  "careers": ["Cultist", "Beggar", "Bandit"],
+  "relationships": {
+    "friendships": ["Fenwick Stonehelm", "Niamh Grimshaw"],
+    "romances": ["Zara Swiftstream"],
+    "rivals": []
+  },
+  "power": [],
+  "artifacts": [],
+  "lineage": {
+    "name": "Grom Marshborn",
+    "lifespan": { "arrivedYear": 10, "diedYear": null, "cause": null },
+    "careers": ["Cultist", "Beggar", "Bandit"],
+    "power": [],
+    "parents": [],
+    "children": [
+      {
+        "name": "Seren Marshborn",
+        "lifespan": { "arrivedYear": 13, "diedYear": null, "cause": null },
+        "careers": [],
+        "power": [],
+        "parents": [],
+        "children": []
+      }
+    ]
+  }
+}
+```
+
+**Error responses:**
+
+| Code | HTTP | Condition |
+|------|------|-----------|
+| `INVALID_FOCUS` | 400 | `?focus=` missing or not `ruler`/`person` |
+| `MISSING_NAME` | 400 | `focus=person` but `?name=` not provided |
+| `PERSON_NOT_FOUND` | 404 | No chronicle events found for the requested name |
+| `CHRONICLE_SUMMARY_ERROR` | 500 | Coordinate load failure |
 
 ---
 
@@ -627,11 +726,11 @@ Kill a living NPC permanently.
 **Required fields:** `x`, `y`, `target`, `playerState`
 
 **Mechanics:**
-- `SuccessChance = 0.40 + strength×0.05 + stealth×0.05`; Guards −0.30, Mayors −0.40, Puppet admins −0.20
+- `SuccessChance = 0.40 + strength×0.05 + stealth×0.05`; Guards −0.30, any ruler role (Mayor/Lord/Magistrate/King) −0.40, Puppet admins −0.20
 - Success: NPC status → `"Dead"`, +75 XP
-- If target was Mayor at a **sovereign town** and `playerState.reputation >= 20`: player becomes Mayor (`playerState.titles[townName] = "Mayor"`), +50 reputation
-- If target was Mayor at a **sovereign town** and reputation < 20: `ruler` set to `"None"`, −40 reputation
-- If target was Mayor or `"Puppet"` at a **District**: player does NOT become mayor; parent city's rule continues
+- If target was a ruling NPC at a **sovereign town** and `playerState.reputation >= 20`: player becomes ruler (`playerState.titles[townName] = <tier-appropriate title>`), +50 reputation
+- If target was a ruling NPC at a **sovereign town** and reputation < 20: `ruler` set to `"None"`, −40 reputation
+- If target was a ruling NPC or `"Puppet"` at a **District**: player does NOT become ruler; parent city's rule continues
 - Failure: −30 reputation
 
 > **Puppet NPCs**: When a town is subjugated (not annexed), the original Mayor NPC survives with `currentRole: "Puppet"`. Killing a Puppet yields +75 XP but never transfers the throne — the parent city will install a replacement. Puppet NPCs appear in the `population` array with `currentRole: "Puppet"`.
@@ -644,10 +743,10 @@ Claim the empty throne of a leaderless town.
 
 **Required fields:** `x`, `y`, `playerState` *(no `target` needed)*
 
-**Preconditions:** No living Mayor NPC exists; `playerState.reputation >= 20`
+**Preconditions:** No living ruler NPC exists; `playerState.reputation >= 20`
 
 **Mechanics:**
-- Success: `playerState.titles[townName] = "Mayor"`, +30 reputation
+- Success: `playerState.titles[townName] = <tier-appropriate title>` (e.g. `"King"` for tier-5), +30 reputation
 - Failure conditions return HTTP 400
 
 ---
@@ -681,7 +780,7 @@ Deliver an item to an NPC (Fetch quest) **or** report a completed bounty.
 
 ---
 
-### `POST /api/action/tax` *(Mayor only)*
+### `POST /api/action/tax` *(Ruling leader only)*
 
 Seize one item from every living NPC that has one.
 
@@ -691,9 +790,9 @@ Seize one item from every living NPC that has one.
 
 ---
 
-### `POST /api/action/decree` *(Mayor only)*
+### `POST /api/action/decree` *(Ruling leader only)*
 
-Change a living NPC's role by mayoral decree.
+Change a living NPC's role by decree.
 
 **Required fields:** `x`, `y`, `target`, `newRole`, `playerState`
 
@@ -701,7 +800,7 @@ Change a living NPC's role by mayoral decree.
 
 ---
 
-### `POST /api/action/banish` *(Mayor only)*
+### `POST /api/action/banish` *(Ruling leader only)*
 
 Exile a living NPC to a random coordinate.
 
@@ -711,23 +810,23 @@ Exile a living NPC to a random coordinate.
 
 ---
 
-### `POST /api/action/abdicate` *(Mayor only)*
+### `POST /api/action/abdicate` *(Ruling leader only)*
 
-Step down as Mayor.
+Step down as the settlement's ruler.
 
 **Required fields:** `x`, `y`, `playerState` *(no `target` needed)*
 
-**Mechanics:** Removes `playerState.titles[townName]`; a random living NPC is elected as new Mayor; +25 reputation if a successor is found
+**Mechanics:** Removes `playerState.titles[townName]`; a random living NPC is elected as the new ruler (title matches settlement tier); +25 reputation if a successor is found
 
 ---
 
 ### `POST /api/action/regicide`
 
-Attempt to assassinate the ruling Mayor of a Kingdom-tier settlement and seize the throne.
+Attempt to assassinate the ruling leader of any sovereign settlement and seize the throne.
 
 **Required fields:** `x`, `y`, `playerState`
 
-**Preconditions:** A living Mayor NPC must exist at the coordinate. The coordinate must not be a District.
+**Preconditions:** A living ruler NPC (any tier-based title: Mayor/Lord/Magistrate/King) must exist at the coordinate. The coordinate must not be a District.
 
 **Mechanics:**
 - `FailChance = 0.95 - (stealth × 0.01) - (strength × 0.01) - (weaponTier × 0.05)`

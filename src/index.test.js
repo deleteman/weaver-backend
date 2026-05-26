@@ -8,7 +8,11 @@ jest.mock('./db', () => ({
     getParentCity: jest.fn(() => null),
     getTierForCoordinate: jest.fn(() => 0),
     getCapsuleDeltas: jest.fn(() => []),
-    getRuinHoard: jest.fn(() => null)
+    getRuinHoard: jest.fn(() => null),
+    appendJournalEntry: jest.fn(),
+    getJournal: jest.fn(() => ({ entries: [], total: 0 })),
+    saveSnapshot: jest.fn(),
+    loadLatestSnapshot: jest.fn(() => null),
 }));
 
 const db = require('./db');
@@ -24,6 +28,7 @@ describe('Chunk Delta Application', () => {
         db.getDeltas.mockImplementation(() => []);
         db.getGlobalYear.mockImplementation(() => 51);
         db.getParentCity.mockImplementation(() => null);
+        db.loadLatestSnapshot.mockImplementation(() => null);
     });
 
     test('loadCoordinate should query getDeltas with the string coordinate key', () => {
@@ -80,6 +85,26 @@ describe('Chunk Delta Application', () => {
         db.getParentCity.mockReturnValue(null);
         db.getDeltas.mockReturnValue([]);
         db.getGlobalYear.mockReturnValue(10000);
+        // Return a near-year snapshot so only 1 year simulates (avoids 9949-year cold path)
+        db.loadLatestSnapshot.mockReturnValue({
+            year: 9999,
+            stateBlob: JSON.stringify({
+                npcs: [],
+                towns: [{
+                    identity: { name: 'Mock Town', type: 'Town', id: 'mock_town_0_0' },
+                    location: { x: 0, y: 0, parentId: null },
+                    history: { events: [] },
+                    currentMayor: 'NPC',
+                    political: { tier: 1, demographics: {}, stance: 'Balanced' },
+                    population: 0,
+                    regionalWealth: 500,
+                    primaryExport: 'Grain',
+                    tradePartners: [],
+                    economicModifiers: { shortage: false, hyperinflation: false, hyperinflationExpiryYear: null, economicBoomYear: null }
+                }],
+                factions: []
+            })
+        });
 
         loadCoordinate(0, 0);
         const chunk = serializeChunk(0, 0);
@@ -102,6 +127,24 @@ describe('Chunk Delta Application', () => {
                 ];
             }
             return [];
+        });
+        // Return a near-year District snapshot so only 1 year simulates (avoids 9949-year cold path)
+        db.loadLatestSnapshot.mockReturnValue({
+            year: 9999,
+            stateBlob: JSON.stringify({
+                npcs: [],
+                towns: [{
+                    identity: { name: 'Mock District', type: 'District', id: 'mock_dist_0_0' },
+                    location: { x: 0, y: 0, parentId: null },
+                    history: { events: [] },
+                    currentMayor: 'High King Aldric',
+                    political: { tier: 5, demographics: {}, stance: 'Balanced' },
+                    population: 0,
+                    districtType: 'Market',
+                    parentCity: 'world_X1_Y0'
+                }],
+                factions: []
+            })
         });
 
         loadCoordinate(0, 0);
@@ -327,6 +370,17 @@ describe('Chunk Delta Application', () => {
         }
     });
 
+    test('serializeChunk includes rulerTitle matching settlement tier', () => {
+        loadCoordinate(0, 0);
+        const chunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        expect(chunk.town).toHaveProperty('rulerTitle');
+        const validTitles = ['Mayor', 'Lord', 'Magistrate', 'King'];
+        expect(validTitles).toContain(chunk.town.rulerTitle);
+    });
+
+
     test('computeDeathAge is deterministic and varies across NPC ids', () => {
         const { computeDeathAge, MAX_NATURAL_LIFESPAN, MAX_LIFESPAN_VARIANCE } = require('../src/history');
         const id = 'abc123def456';
@@ -337,5 +391,55 @@ describe('Chunk Delta Application', () => {
         // Two ids shouldn't always produce the same death age (probabilistically guaranteed by the 10-year range)
         const results = new Set(['abc123', 'def456', '111111', '222222', '333333', '444444'].map(computeDeathAge));
         expect(results.size).toBeGreaterThan(1);
+    });
+
+    test('currentMayor delta application uses newest-wins (matches /api/map find() semantics)', () => {
+        // Bug 2c regression: when multiple currentMayor deltas exist (newest first
+        // from ORDER BY id DESC), the chunk pipeline must apply only the newest one.
+        // Previously it iterated all matches and the OLDEST won — so a stale 'None'
+        // from an early unload would clobber a recent 'The Player' / successor delta.
+        // Year 1 keeps simulation deterministic (no extra ruler events fire).
+        db.getGlobalYear.mockReturnValue(1);
+        db.getParentCity.mockReturnValue(null);
+
+        // First load to learn the deterministic town entity id/name for this coord.
+        db.getDeltas.mockReturnValue([]);
+        loadCoordinate(0, 0);
+        const baselineChunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        const townName = baselineChunk.town.name;
+
+        // Now stage three currentMayor deltas in newest-first order. Only the first
+        // (newest) should win — older ones must be skipped.
+        db.getDeltas.mockReturnValue([
+            { id: 30, entity_name: townName, state_key: 'currentMayor', state_value: 'Rowena Wintershield' },
+            { id: 20, entity_name: townName, state_key: 'currentMayor', state_value: 'The Player' },
+            { id: 10, entity_name: townName, state_key: 'currentMayor', state_value: 'None' },
+        ]);
+
+        loadCoordinate(0, 0);
+        const chunk = serializeChunk(0, 0);
+        unloadCoordinate(0, 0);
+
+        expect(chunk.town.ruler).toBe('Rowena Wintershield');
+    });
+
+    test('unloadCoordinate uses upsertDelta (not saveDelta) for Town currentMayor', () => {
+        // Bug 2b regression: accumulating saveDelta rows on every visit eventually
+        // outranked any legitimate ruler delta under newest-wins. Switching to
+        // upsertDelta keeps a single row per (coord, entity_id, currentMayor).
+        db.getParentCity.mockReturnValue(null);
+        db.getDeltas.mockReturnValue([]);
+        db.getGlobalYear.mockReturnValue(1);
+
+        loadCoordinate(0, 0);
+        unloadCoordinate(0, 0);
+
+        const saveMayorCalls = db.saveDelta.mock.calls.filter(call => call[2] === 'currentMayor');
+        const upsertMayorCalls = db.upsertDelta.mock.calls.filter(call => call[2] === 'currentMayor');
+
+        expect(saveMayorCalls).toHaveLength(0);
+        expect(upsertMayorCalls.length).toBeGreaterThan(0);
     });
 });

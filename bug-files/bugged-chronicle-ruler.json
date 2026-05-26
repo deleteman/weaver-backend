@@ -1,0 +1,2244 @@
+{
+    "title": "The Chronicles of Coordinate 0, 2",
+    "timeline": {
+        "Year 1": [
+            {
+                "id": "ev_3c5f5e52",
+                "actor": "Emric Blackwood",
+                "text": "Discovered The Crimson Signet in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            }
+        ],
+        "Year 2": [
+            {
+                "id": "ev_393c81b6",
+                "actor": "Caius Swiftblade",
+                "text": "Started a bitter blood feud with Sigrid Blackmere.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_5edced3f",
+                "actor": "Soraya Ironfist",
+                "text": "Formed a strong bond with Alistair Thornback.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_393c81b6",
+                "actor": "Alistair Thornback",
+                "text": "Started a bitter blood feud with Sigrid Blackmere.",
+                "type": "rivalry",
+                "causedBy": null
+            }
+        ],
+        "Year 3": [
+            {
+                "id": "ev_0f4f3cd7",
+                "actor": "Bogdan Ironwood",
+                "text": "Formed a strong bond with Caius Swiftblade.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_b766e8df",
+                "actor": "Alistair Thornback",
+                "text": "Discovered The Obsidian Cleaver in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_280e7c87",
+                "actor": "Faelan Ravenwood",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f8ef0a05",
+                "actor": "Sigrid Blackmere",
+                "text": "Formed a strong bond with Emric Blackwood.",
+                "type": "friendship",
+                "causedBy": null
+            }
+        ],
+        "Year 4": [
+            {
+                "id": "ev_d34307a8",
+                "actor": "Soraya Ironfist",
+                "text": "Packed their belongings and migrated to coordinates X:53, Y:71.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_2712234a",
+                "actor": "Bogdan Ironwood",
+                "text": "Started a bitter blood feud with Sigrid Blackmere.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_63208962",
+                "actor": "Sylas Deepforge",
+                "text": "Seized power and became the new Magistrate.",
+                "type": "power_seizure",
+                "causedBy": null
+            }
+        ],
+        "Year 5": [
+            {
+                "id": "ev_40ee7922",
+                "actor": "Bogdan Ironwood",
+                "text": "Discovered The Void Signet in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_fd970542",
+                "actor": "Faelan Ravenwood",
+                "text": "Fell deeply in love with Alistair Thornback.",
+                "type": "romance",
+                "causedBy": null
+            }
+        ],
+        "Year 6": [
+            {
+                "id": "ev_cb03c0ee",
+                "actor": "Emric Blackwood",
+                "text": "Discovered The Astral Mace in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_59a1332b",
+                "actor": "Alistair Thornback",
+                "text": "Received Game from Faelan Ravenwood, who closed their stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_d5365d28",
+                    "year": 6,
+                    "description": "[Year 6] Became a Bandit.",
+                    "type": "career_shift",
+                    "actorName": "Faelan Ravenwood"
+                }
+            },
+            {
+                "id": "ev_6c8ea0d2",
+                "actor": "Alistair Thornback",
+                "text": "Received The Crimson Idol from Faelan Ravenwood, who closed their stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_d5365d28",
+                    "year": 6,
+                    "description": "[Year 6] Became a Bandit.",
+                    "type": "career_shift",
+                    "actorName": "Faelan Ravenwood"
+                }
+            },
+            {
+                "id": "ev_d5365d28",
+                "actor": "Faelan Ravenwood",
+                "text": "Became a Bandit.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_548c2c94",
+                "actor": "Sylas Deepforge",
+                "text": "Discovered The Ethereal Scroll in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            }
+        ],
+        "Year 7": [
+            {
+                "id": "ev_8bc9b9f0",
+                "actor": "Faelan Ravenwood",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_6f6297eb",
+                "actor": "Nadir Stonehelm",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            }
+        ],
+        "Year 8": [
+            {
+                "id": "ev_738188ba",
+                "actor": "Bogdan Ironwood",
+                "text": "died of a sudden fever.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_185d5c7f",
+                "actor": "Alistair Thornback",
+                "text": "Packed their belongings and migrated to coordinates X:78, Y:31.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_185d5c7f",
+                "actor": "Faelan Ravenwood",
+                "text": "Packed their belongings and migrated to coordinates X:78, Y:31.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_90e007a3",
+                "actor": "Nadir Stonehelm",
+                "text": "Packed their belongings and migrated to coordinates X:45, Y:31.",
+                "type": "migration",
+                "causedBy": null
+            }
+        ],
+        "Year 9": [
+            {
+                "id": "ev_7d63f544",
+                "actor": "Kael Stonebreaker",
+                "text": "Became a Cultist.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_081789fb",
+                "actor": "Carwyn Grimsword",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            }
+        ],
+        "Year 10": [
+            {
+                "id": "ev_c0b76c6b",
+                "actor": "Ironford",
+                "text": "Ironford has declined to a FullCity.",
+                "type": "settlement_demoted",
+                "causedBy": null
+            },
+            {
+                "id": "ev_d64ae08f",
+                "actor": "Caius Swiftblade",
+                "text": "Started a bitter blood feud with Gwyn Redclaw.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_0de56365",
+                "actor": "Emric Blackwood",
+                "text": "Discovered The Void Grimoire in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_256ccd0a",
+                "actor": "Sylas Deepforge",
+                "text": "Formed a strong bond with Gwyn Redclaw.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_2d2e350d",
+                "actor": "Carwyn Grimsword",
+                "text": "Became a Scholar.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Fenwick Stonehelm",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Gwyn Redclaw",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_30dba256",
+                "actor": "Gwyn Redclaw",
+                "text": "Formed a strong bond with Grom Marshborn.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Fiona Nighthollow",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Grom Marshborn",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_1f1f2fa1",
+                "actor": "Grom Marshborn",
+                "text": "Became a Cultist.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Zara Swiftstream",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Selwyn Silverbrook",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_cebd2f35",
+                "actor": "Selwyn Silverbrook",
+                "text": "Started a bitter blood feud with Caius Swiftblade.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Hilda Oakheart",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_c5fc701f",
+                "actor": "Hilda Oakheart",
+                "text": "Started a bitter blood feud with Lysander Coppergate.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Gareth Hawkwood",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Niamh Grimshaw",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Lysander Coppergate",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_128e3a38",
+                "actor": "Nerys Blackthorn",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            }
+        ],
+        "Year 11": [
+            {
+                "id": "ev_e585f07d",
+                "actor": "Sylas Deepforge",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_66446fc6",
+                "actor": "Fiona Nighthollow",
+                "text": "Discovered The Ethereal Halberd in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_2255ffb8",
+                "actor": "Grom Marshborn",
+                "text": "Became a Beggar.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_2f040fcc",
+                "actor": "Nerys Blackthorn",
+                "text": "Discovered The Void Pendant in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f9a3a8de",
+                "actor": "Halfdan Starfall",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            }
+        ],
+        "Year 12": [
+            {
+                "id": "ev_59cb8e41",
+                "actor": "Fenwick Stonehelm",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_2ed80152",
+                "actor": "Gwyn Redclaw",
+                "text": "was killed by a wild beast.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_ac10de89",
+                "actor": "Zara Swiftstream",
+                "text": "Fell deeply in love with Grom Marshborn.",
+                "type": "romance",
+                "causedBy": null
+            },
+            {
+                "id": "ev_89af00e4",
+                "actor": "Hilda Oakheart",
+                "text": "Became a Bandit.",
+                "type": "career_shift",
+                "causedBy": null
+            }
+        ],
+        "Year 13": [
+            {
+                "id": "ev_898a6d5f",
+                "actor": "Caius Swiftblade",
+                "text": "Started a bitter blood feud with Kael Stonebreaker.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_181ecd71",
+                "actor": "Kael Stonebreaker",
+                "text": "died of a sudden fever.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_c151f76f",
+                "actor": "Grom Marshborn",
+                "text": "Had a child named Seren Marshborn with Zara Swiftstream.",
+                "type": "birth",
+                "causedBy": null
+            },
+            {
+                "id": "ev_5bc01168",
+                "actor": "Zara Swiftstream",
+                "text": "Welcomed their child, Seren Marshborn.",
+                "type": "birth",
+                "causedBy": null
+            },
+            {
+                "id": "ev_6e26f6a3",
+                "actor": "Selwyn Silverbrook",
+                "text": "Started a bitter blood feud with Lysander Coppergate.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_5fd8d692",
+                "actor": "Gareth Hawkwood",
+                "text": "Became a Beggar.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4373b251",
+                "actor": "Lysander Coppergate",
+                "text": "Seized power and became the new Lord.",
+                "type": "power_seizure",
+                "causedBy": null
+            },
+            {
+                "id": "ev_7a55cff5",
+                "actor": "Nerys Blackthorn",
+                "text": "was killed by a wild beast.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_9bb2ace3",
+                "actor": "Halfdan Starfall",
+                "text": "Started a bitter blood feud with Selwyn Silverbrook.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_e8af1826",
+                "actor": "Isolde Blackwood",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_55062985",
+                "actor": "Isolde Blackwood",
+                "text": "Started a bitter blood feud with Gareth Hawkwood.",
+                "type": "rivalry",
+                "causedBy": null
+            }
+        ],
+        "Year 14": [
+            {
+                "id": "ev_2ef445cd",
+                "actor": "Sylas Deepforge",
+                "text": "Formed a strong bond with Hilda Oakheart.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_9e881aff",
+                "actor": "Sigrid Blackmere",
+                "text": "Started a bitter blood feud with Gareth Hawkwood.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_7c2fd923",
+                "actor": "Niamh Grimshaw",
+                "text": "Started a bitter blood feud with Lysander Coppergate.",
+                "type": "rivalry",
+                "causedBy": null
+            }
+        ],
+        "Year 15": [
+            {
+                "id": "ev_345d4a43",
+                "actor": "Emric Blackwood",
+                "text": "Discovered The Void Mace in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_916b3ea0",
+                "actor": "Grom Marshborn",
+                "text": "Became a Bandit.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_6be1545a",
+                "actor": "Isolde Blackwood",
+                "text": "Fell deeply in love with Niamh Grimshaw.",
+                "type": "romance",
+                "causedBy": null
+            }
+        ],
+        "Year 16": [
+            {
+                "id": "ev_917ad26d",
+                "actor": "Caius Swiftblade",
+                "text": "Became a Bandit.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_24585430",
+                "actor": "Selwyn Silverbrook",
+                "text": "Discovered The Astral Grimoire in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_7b39f3a4",
+                "actor": "Gareth Hawkwood",
+                "text": "Formed a strong bond with Halfdan Starfall.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_9ffa5f3e",
+                "actor": "Lysander Coppergate",
+                "text": "Became a Beggar.",
+                "type": "career_shift",
+                "causedBy": null
+            }
+        ],
+        "Year 17": [
+            {
+                "id": "ev_f00a5029",
+                "actor": "Hilda Oakheart",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_dd545bb3",
+                "actor": "Halfdan Starfall",
+                "text": "Became a Guard.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_c6a53168",
+                "actor": "Carwyn Ironspire",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            }
+        ],
+        "Year 18": [
+            {
+                "id": "ev_5b62c1a9",
+                "actor": "Emric Blackwood",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_9b4a7e52",
+                "actor": "Emric Blackwood",
+                "text": "Acquired 2× Game from Fenwick Stonehelm's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_8020a29d",
+                    "year": 18,
+                    "description": "[Year 18] Became a Cultist.",
+                    "type": "career_shift",
+                    "actorName": "Fenwick Stonehelm"
+                }
+            },
+            {
+                "id": "ev_79000bdb",
+                "actor": "Emric Blackwood",
+                "text": "Acquired 5× Game from Fenwick Stonehelm's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_8020a29d",
+                    "year": 18,
+                    "description": "[Year 18] Became a Cultist.",
+                    "type": "career_shift",
+                    "actorName": "Fenwick Stonehelm"
+                }
+            },
+            {
+                "id": "ev_7ea62b99",
+                "actor": "Sylas Deepforge",
+                "text": "Formed a strong bond with Grom Marshborn.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_9b4a7e52",
+                "actor": "Sylas Deepforge",
+                "text": "Acquired 2× Game from Fenwick Stonehelm's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_8020a29d",
+                    "year": 18,
+                    "description": "[Year 18] Became a Cultist.",
+                    "type": "career_shift",
+                    "actorName": "Fenwick Stonehelm"
+                }
+            },
+            {
+                "id": "ev_8020a29d",
+                "actor": "Fenwick Stonehelm",
+                "text": "Became a Cultist.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_438a2b5f",
+                "actor": "Fiona Nighthollow",
+                "text": "Fell deeply in love with Selwyn Silverbrook.",
+                "type": "romance",
+                "causedBy": null
+            },
+            {
+                "id": "ev_e41fe258",
+                "actor": "Fiona Nighthollow",
+                "text": "Packed their belongings and migrated to coordinates X:31, Y:62.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_d7f34653",
+                "actor": "Selwyn Silverbrook",
+                "text": "Acquired 1× Game from Fenwick Stonehelm's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_8020a29d",
+                    "year": 18,
+                    "description": "[Year 18] Became a Cultist.",
+                    "type": "career_shift",
+                    "actorName": "Fenwick Stonehelm"
+                }
+            },
+            {
+                "id": "ev_b37fdb16",
+                "actor": "Selwyn Silverbrook",
+                "text": "Acquired 1× The Iron Scroll from Fenwick Stonehelm's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_8020a29d",
+                    "year": 18,
+                    "description": "[Year 18] Became a Cultist.",
+                    "type": "career_shift",
+                    "actorName": "Fenwick Stonehelm"
+                }
+            },
+            {
+                "id": "ev_e41fe258",
+                "actor": "Selwyn Silverbrook",
+                "text": "Packed their belongings and migrated to coordinates X:31, Y:62.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_74b5c230",
+                "actor": "Hilda Oakheart",
+                "text": "Acquired 3× Game from Fenwick Stonehelm's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_8020a29d",
+                    "year": 18,
+                    "description": "[Year 18] Became a Cultist.",
+                    "type": "career_shift",
+                    "actorName": "Fenwick Stonehelm"
+                }
+            },
+            {
+                "id": "ev_9b4a7e52",
+                "actor": "Hilda Oakheart",
+                "text": "Acquired 2× Game from Fenwick Stonehelm's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_8020a29d",
+                    "year": 18,
+                    "description": "[Year 18] Became a Cultist.",
+                    "type": "career_shift",
+                    "actorName": "Fenwick Stonehelm"
+                }
+            },
+            {
+                "id": "ev_18cd8781",
+                "actor": "Hilda Oakheart",
+                "text": "Discovered The Crimson Manifesto in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            }
+        ],
+        "Year 19": [
+            {
+                "id": "ev_584295a0",
+                "actor": "Sigrid Blackmere",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f4408ef2",
+                "actor": "Zara Swiftstream",
+                "text": "Became a Cultist.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_1d6ad00b",
+                "actor": "Carwyn Ironspire",
+                "text": "Became a Scholar.",
+                "type": "career_shift",
+                "causedBy": null
+            }
+        ],
+        "Year 20": [
+            {
+                "id": "ev_c356e58c",
+                "actor": "Fenwick Stonehelm",
+                "text": "Formed a strong bond with Grom Marshborn.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_364ad546",
+                "actor": "Grom Marshborn",
+                "text": "Formed a strong bond with Niamh Grimshaw.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_9d390c59",
+                "actor": "Zara Swiftstream",
+                "text": "Discovered The Bone Codex in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_ac097945",
+                "actor": "Halfdan Starfall",
+                "text": "Fell deeply in love with Emric Blackwood.",
+                "type": "romance",
+                "causedBy": null
+            },
+            {
+                "id": "ev_dd9264ab",
+                "actor": "Carwyn Ironspire",
+                "text": "Started a bitter blood feud with Lysander Coppergate.",
+                "type": "rivalry",
+                "causedBy": null
+            }
+        ],
+        "Year 21": [
+            {
+                "id": "ev_83691a40",
+                "actor": "Caius Swiftblade",
+                "text": "Discovered The Bone Dagger in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_919d206d",
+                "actor": "Carwyn Grimsword",
+                "text": "Discovered The Void Grimoire in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_fbc425ea",
+                "actor": "Fenwick Stonehelm",
+                "text": "Discovered The Obsidian Codex in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_35d30b25",
+                "actor": "Zara Swiftstream",
+                "text": "Seized power and became the new Lord.",
+                "type": "power_seizure",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f455c499",
+                "actor": "Gareth Hawkwood",
+                "text": "Became a Cultist.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_7272bed0",
+                "actor": "Isolde Blackwood",
+                "text": "Became a Bandit.",
+                "type": "career_shift",
+                "causedBy": null
+            }
+        ],
+        "Year 22": [
+            {
+                "id": "ev_62efc359",
+                "actor": "Grom Marshborn",
+                "text": "Had a child named Sigrid Marshborn with Zara Swiftstream.",
+                "type": "birth",
+                "causedBy": null
+            },
+            {
+                "id": "ev_ff1beb4f",
+                "actor": "Zara Swiftstream",
+                "text": "Welcomed their child, Sigrid Marshborn.",
+                "type": "birth",
+                "causedBy": null
+            },
+            {
+                "id": "ev_a0eb398f",
+                "actor": "Lysander Coppergate",
+                "text": "died of a sudden fever.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_202a6fe9",
+                "actor": "Carwyn Ironspire",
+                "text": "Started a bitter blood feud with Sylas Deepforge.",
+                "type": "rivalry",
+                "causedBy": null
+            }
+        ],
+        "Year 23": [
+            {
+                "id": "ev_8fe67d89",
+                "actor": "Sylas Deepforge",
+                "text": "Discovered The Iron Scroll in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_a151553f",
+                "actor": "Sigrid Blackmere",
+                "text": "Discovered The Obsidian Blade in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_871aa965",
+                "actor": "Fenwick Stonehelm",
+                "text": "Fell deeply in love with Sigrid Blackmere.",
+                "type": "romance",
+                "causedBy": null
+            },
+            {
+                "id": "ev_0c8e9296",
+                "actor": "Niamh Grimshaw",
+                "text": "Packed their belongings and migrated to coordinates X:97, Y:76.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_55d2ef8d",
+                "actor": "Halfdan Starfall",
+                "text": "Discovered The Ethereal Idol in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_0c8e9296",
+                "actor": "Isolde Blackwood",
+                "text": "Packed their belongings and migrated to coordinates X:97, Y:76.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_937da9a2",
+                "actor": "Carwyn Ironspire",
+                "text": "Fell deeply in love with Caius Swiftblade.",
+                "type": "romance",
+                "causedBy": null
+            }
+        ],
+        "Year 24": [
+            {
+                "id": "ev_38fb5d9a",
+                "actor": "Sigrid Blackmere",
+                "text": "Started a bitter blood feud with Fenwick Stonehelm.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_b795505e",
+                "actor": "Fenwick Stonehelm",
+                "text": "Discovered The Astral Halberd in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_9617b21b",
+                "actor": "Zara Swiftstream",
+                "text": "Formed a strong bond with Gareth Hawkwood.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_00c2c40b",
+                "actor": "Zara Swiftstream",
+                "text": "Was ousted from the Lord's seat by Hilda Oakheart.",
+                "type": "power_seizure",
+                "causedBy": {
+                    "id": "ev_4ba60688",
+                    "year": 24,
+                    "description": "[Year 24] Seized power and became the new Lord.",
+                    "type": "power_seizure",
+                    "actorName": "Hilda Oakheart"
+                }
+            },
+            {
+                "id": "ev_4ba60688",
+                "actor": "Hilda Oakheart",
+                "text": "Seized power and became the new Lord.",
+                "type": "power_seizure",
+                "causedBy": null
+            },
+            {
+                "id": "ev_9a67f040",
+                "actor": "Hilda Oakheart",
+                "text": "Was ousted from the Lord's seat by Gareth Hawkwood.",
+                "type": "power_seizure",
+                "causedBy": {
+                    "id": "ev_4ba60688",
+                    "year": 24,
+                    "description": "[Year 24] Seized power and became the new Lord.",
+                    "type": "power_seizure",
+                    "actorName": "Gareth Hawkwood"
+                }
+            },
+            {
+                "id": "ev_4ba60688",
+                "actor": "Gareth Hawkwood",
+                "text": "Seized power and became the new Lord.",
+                "type": "power_seizure",
+                "causedBy": null
+            },
+            {
+                "id": "ev_050a0e11",
+                "actor": "Halfdan Starfall",
+                "text": "Started a bitter blood feud with Seren Marshborn.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_664834e3",
+                "actor": "Carwyn Ironspire",
+                "text": "Discovered The Iron Urn in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            }
+        ],
+        "Year 25": [
+            {
+                "id": "ev_499146e8",
+                "actor": "Emric Blackwood",
+                "text": "Packed their belongings and migrated to coordinates X:40, Y:60.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4c23f61c",
+                "actor": "Hilda Oakheart",
+                "text": "Started a bitter blood feud with Gareth Hawkwood.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_499146e8",
+                "actor": "Halfdan Starfall",
+                "text": "Packed their belongings and migrated to coordinates X:40, Y:60.",
+                "type": "migration",
+                "causedBy": null
+            }
+        ],
+        "Year 26": [
+            {
+                "id": "ev_62158f75",
+                "actor": "Caius Swiftblade",
+                "text": "Formed a strong bond with Carwyn Grimsword.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_2c6a8c9e",
+                "actor": "Carwyn Grimsword",
+                "text": "Formed a strong bond with Gareth Hawkwood.",
+                "type": "friendship",
+                "causedBy": null
+            }
+        ],
+        "Year 27": [
+            {
+                "id": "ev_654194ac",
+                "actor": "Caius Swiftblade",
+                "text": "died of a sudden fever.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_41865397",
+                "actor": "Sylas Deepforge",
+                "text": "Acquired 1× Game from Sigrid Blackmere's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_de20b1ea",
+                    "year": 27,
+                    "description": "[Year 27] Became a Scholar.",
+                    "type": "career_shift",
+                    "actorName": "Sigrid Blackmere"
+                }
+            },
+            {
+                "id": "ev_7b5c9742",
+                "actor": "Sylas Deepforge",
+                "text": "Acquired 2× Game from Sigrid Blackmere's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_de20b1ea",
+                    "year": 27,
+                    "description": "[Year 27] Became a Scholar.",
+                    "type": "career_shift",
+                    "actorName": "Sigrid Blackmere"
+                }
+            },
+            {
+                "id": "ev_644b19a8",
+                "actor": "Sylas Deepforge",
+                "text": "Acquired 5× Game from Sigrid Blackmere's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_de20b1ea",
+                    "year": 27,
+                    "description": "[Year 27] Became a Scholar.",
+                    "type": "career_shift",
+                    "actorName": "Sigrid Blackmere"
+                }
+            },
+            {
+                "id": "ev_fb38ada1",
+                "actor": "Sylas Deepforge",
+                "text": "Acquired 3× Game from Sigrid Blackmere's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_de20b1ea",
+                    "year": 27,
+                    "description": "[Year 27] Became a Scholar.",
+                    "type": "career_shift",
+                    "actorName": "Sigrid Blackmere"
+                }
+            },
+            {
+                "id": "ev_a40725f8",
+                "actor": "Sylas Deepforge",
+                "text": "Acquired 1× The Obsidian Manifesto from Sigrid Blackmere's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_de20b1ea",
+                    "year": 27,
+                    "description": "[Year 27] Became a Scholar.",
+                    "type": "career_shift",
+                    "actorName": "Sigrid Blackmere"
+                }
+            },
+            {
+                "id": "ev_a7380a36",
+                "actor": "Sylas Deepforge",
+                "text": "Acquired 1× The Obsidian Signet from Sigrid Blackmere's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_de20b1ea",
+                    "year": 27,
+                    "description": "[Year 27] Became a Scholar.",
+                    "type": "career_shift",
+                    "actorName": "Sigrid Blackmere"
+                }
+            },
+            {
+                "id": "ev_de20b1ea",
+                "actor": "Sigrid Blackmere",
+                "text": "Became a Scholar.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_6b799b78",
+                "actor": "Grom Marshborn",
+                "text": "Packed their belongings and migrated to coordinates X:32, Y:1.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_6b799b78",
+                "actor": "Zara Swiftstream",
+                "text": "Packed their belongings and migrated to coordinates X:32, Y:1.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_6b799b78",
+                "actor": "Seren Marshborn",
+                "text": "Packed their belongings and migrated to coordinates X:32, Y:1.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_0f940989",
+                "actor": "Carwyn Ironspire",
+                "text": "Inherited belongings from the late Caius Swiftblade.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_654194ac",
+                    "year": 27,
+                    "description": "[Year 27] died of a sudden fever.",
+                    "type": "death",
+                    "actorName": "Caius Swiftblade"
+                }
+            },
+            {
+                "id": "ev_6b799b78",
+                "actor": "Sigrid Marshborn",
+                "text": "Packed their belongings and migrated to coordinates X:32, Y:1.",
+                "type": "migration",
+                "causedBy": null
+            }
+        ],
+        "Year 28": [
+            {
+                "id": "ev_13046b9d",
+                "actor": "Carwyn Grimsword",
+                "text": "Packed their belongings and migrated to coordinates X:55, Y:53.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_01dfc1b5",
+                "actor": "Carwyn Ironspire",
+                "text": "Was heartbroken by the loss of their love.",
+                "type": "grief",
+                "causedBy": {
+                    "id": "ev_654194ac",
+                    "year": 27,
+                    "description": "[Year 27] died of a sudden fever.",
+                    "type": "death",
+                    "actorName": "Caius Swiftblade"
+                }
+            },
+            {
+                "id": "ev_3c2c673c",
+                "actor": "Carwyn Ironspire",
+                "text": "Discovered The Obsidian Codex in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_c76c93ff",
+                "actor": "Ingrid Greymantle",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            }
+        ],
+        "Year 29": [
+            {
+                "id": "ev_6beebe6c",
+                "actor": "Fenwick Stonehelm",
+                "text": "Started a bitter blood feud with Carwyn Ironspire.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f0397263",
+                "actor": "Carwyn Ironspire",
+                "text": "Became a Guard.",
+                "type": "career_shift",
+                "causedBy": null
+            }
+        ],
+        "Year 30": [
+            {
+                "id": "ev_f2916e3d",
+                "actor": "Sylas Deepforge",
+                "text": "Discovered The Iron Lantern in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4d5a6cb5",
+                "actor": "Halfdan Stoneheart",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4d5a6cb5",
+                "actor": "Ulf Crowfield",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4d5a6cb5",
+                "actor": "Urist Crowfield",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4d5a6cb5",
+                "actor": "Cedric Silverbrook",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4d5a6cb5",
+                "actor": "Orik Goldmane",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4d5a6cb5",
+                "actor": "Gunnar Grimshaw",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_6ddef964",
+                "actor": "Gunnar Grimshaw",
+                "text": "Fell deeply in love with Ingrid Greymantle.",
+                "type": "romance",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4d5a6cb5",
+                "actor": "Erik Embervane",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4d5a6cb5",
+                "actor": "Vex Thornback",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4d5a6cb5",
+                "actor": "Rashid Oakheart",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4d5a6cb5",
+                "actor": "Bjorn Highkeep",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f07176d6",
+                "actor": "Ingrid Stonecroft",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_015ed714",
+                "actor": "Ingrid Stonecroft",
+                "text": "Started a bitter blood feud with Urist Crowfield.",
+                "type": "rivalry",
+                "causedBy": null
+            }
+        ],
+        "Year 31": [
+            {
+                "id": "ev_1527d910",
+                "actor": "Gareth Hawkwood",
+                "text": "Discovered The Obsidian Pendant in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_98b08c64",
+                "actor": "Orik Goldmane",
+                "text": "Discovered The Ethereal Scroll in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4fb8bf93",
+                "actor": "Ingrid Stonecroft",
+                "text": "Became a Scholar.",
+                "type": "career_shift",
+                "causedBy": null
+            }
+        ],
+        "Year 32": [
+            {
+                "id": "ev_b323bd6d",
+                "actor": "Fenwick Stonehelm",
+                "text": "Started a bitter blood feud with Ingrid Stonecroft.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_d1a49652",
+                "actor": "Vex Thornback",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_3e2c9176",
+                "actor": "Rashid Oakheart",
+                "text": "Formed a strong bond with Ingrid Greymantle.",
+                "type": "friendship",
+                "causedBy": null
+            }
+        ],
+        "Year 33": [
+            {
+                "id": "ev_3c71a244",
+                "actor": "Urist Crowfield",
+                "text": "Started a bitter blood feud with Hilda Oakheart.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4386d184",
+                "actor": "Rashid Oakheart",
+                "text": "Became a Cultist.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_bb715da6",
+                "actor": "Zorya Blackmere",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            }
+        ],
+        "Year 34": [
+            {
+                "id": "ev_bc92e995",
+                "actor": "Sylas Deepforge",
+                "text": "passed away peacefully in their sleep.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_74b77071",
+                "actor": "Sigrid Blackmere",
+                "text": "Discovered The Ethereal Blade in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_b3b277f1",
+                "actor": "Ulf Crowfield",
+                "text": "Started a bitter blood feud with Fenwick Stonehelm.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_a44da0ca",
+                "actor": "Urist Crowfield",
+                "text": "Discovered The Void Dagger in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_ff41cde8",
+                "actor": "Cedric Silverbrook",
+                "text": "Became a Guard.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_a9798aea",
+                "actor": "Bjorn Highkeep",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_75a8fd09",
+                "actor": "Ingrid Stonecroft",
+                "text": "Formed a strong bond with Sigrid Blackmere.",
+                "type": "friendship",
+                "causedBy": null
+            }
+        ],
+        "Year 35": [
+            {
+                "id": "ev_d8c13c18",
+                "actor": "Hilda Oakheart",
+                "text": "Formed a strong bond with Rashid Oakheart.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_e3f322f1",
+                "actor": "Gareth Hawkwood",
+                "text": "Was ousted from the Lord's seat by Ingrid Stonecroft.",
+                "type": "power_seizure",
+                "causedBy": {
+                    "id": "ev_d0263632",
+                    "year": 35,
+                    "description": "[Year 35] Seized power and became the new Lord.",
+                    "type": "power_seizure",
+                    "actorName": "Ingrid Stonecroft"
+                }
+            },
+            {
+                "id": "ev_266c1833",
+                "actor": "Carwyn Ironspire",
+                "text": "Formed a strong bond with Ulf Crowfield.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_3f61ffc0",
+                "actor": "Ulf Crowfield",
+                "text": "Discovered The Obsidian Band in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_d41b0a3c",
+                "actor": "Urist Crowfield",
+                "text": "Discovered The Crimson Ring in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_fd55c821",
+                "actor": "Cedric Silverbrook",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_5c4cc1ca",
+                "actor": "Cedric Silverbrook",
+                "text": "Acquired 5× Game from Vex Thornback's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_a0086e0e",
+                    "year": 35,
+                    "description": "[Year 35] Became a Guard.",
+                    "type": "career_shift",
+                    "actorName": "Vex Thornback"
+                }
+            },
+            {
+                "id": "ev_bcd944e1",
+                "actor": "Cedric Silverbrook",
+                "text": "Acquired 2× Game from Vex Thornback's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_a0086e0e",
+                    "year": 35,
+                    "description": "[Year 35] Became a Guard.",
+                    "type": "career_shift",
+                    "actorName": "Vex Thornback"
+                }
+            },
+            {
+                "id": "ev_fb0c762c",
+                "actor": "Cedric Silverbrook",
+                "text": "Acquired 3× Game from Vex Thornback's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_a0086e0e",
+                    "year": 35,
+                    "description": "[Year 35] Became a Guard.",
+                    "type": "career_shift",
+                    "actorName": "Vex Thornback"
+                }
+            },
+            {
+                "id": "ev_40d97323",
+                "actor": "Cedric Silverbrook",
+                "text": "Acquired 4× Game from Vex Thornback's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_a0086e0e",
+                    "year": 35,
+                    "description": "[Year 35] Became a Guard.",
+                    "type": "career_shift",
+                    "actorName": "Vex Thornback"
+                }
+            },
+            {
+                "id": "ev_50f8c488",
+                "actor": "Cedric Silverbrook",
+                "text": "Acquired 1× The Iron Manifesto from Vex Thornback's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_a0086e0e",
+                    "year": 35,
+                    "description": "[Year 35] Became a Guard.",
+                    "type": "career_shift",
+                    "actorName": "Vex Thornback"
+                }
+            },
+            {
+                "id": "ev_64e48e57",
+                "actor": "Erik Embervane",
+                "text": "Fell deeply in love with Cedric Silverbrook.",
+                "type": "romance",
+                "causedBy": null
+            },
+            {
+                "id": "ev_a0086e0e",
+                "actor": "Vex Thornback",
+                "text": "Became a Guard.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_e2092dc8",
+                "actor": "Rashid Oakheart",
+                "text": "Discovered The Iron Chalice in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_5c4cc1ca",
+                "actor": "Bjorn Highkeep",
+                "text": "Acquired 5× Game from Vex Thornback's abandoned stall.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_a0086e0e",
+                    "year": 35,
+                    "description": "[Year 35] Became a Guard.",
+                    "type": "career_shift",
+                    "actorName": "Vex Thornback"
+                }
+            },
+            {
+                "id": "ev_d0263632",
+                "actor": "Ingrid Stonecroft",
+                "text": "Seized power and became the new Lord.",
+                "type": "power_seizure",
+                "causedBy": null
+            }
+        ],
+        "Year 36": [
+            {
+                "id": "ev_749f8ab2",
+                "actor": "Sigrid Blackmere",
+                "text": "Started a bitter blood feud with Vex Thornback.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_87569adb",
+                "actor": "Hilda Oakheart",
+                "text": "Discovered The Crimson Chalice in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_978cc8f5",
+                "actor": "Ulf Crowfield",
+                "text": "Discovered The Obsidian Crown in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_28af86c1",
+                "actor": "Vex Thornback",
+                "text": "was killed by a wild beast.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_c23e5cfa",
+                "actor": "Rashid Oakheart",
+                "text": "Formed a strong bond with Cedric Silverbrook.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_dfb2a1f9",
+                "actor": "Bjorn Highkeep",
+                "text": "Fell deeply in love with Ingrid Stonecroft.",
+                "type": "romance",
+                "causedBy": null
+            }
+        ],
+        "Year 37": [
+            {
+                "id": "ev_b7d7c047",
+                "actor": "Gareth Hawkwood",
+                "text": "Formed a strong bond with Carwyn Ironspire.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_e321e649",
+                "actor": "Halfdan Stoneheart",
+                "text": "Started a bitter blood feud with Urist Crowfield.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_2fd0f077",
+                "actor": "Zorya Blackmere",
+                "text": "Discovered The Obsidian Halberd in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_d4fafa28",
+                "actor": "Callum Silvertongue",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            }
+        ],
+        "Year 38": [
+            {
+                "id": "ev_2438b075",
+                "actor": "Sigrid Blackmere",
+                "text": "Inherited belongings from the late Fenwick Stonehelm.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_5ad073bd",
+                    "year": 38,
+                    "description": "[Year 38] was killed by a wild beast.",
+                    "type": "death",
+                    "actorName": "Fenwick Stonehelm"
+                }
+            },
+            {
+                "id": "ev_5ad073bd",
+                "actor": "Fenwick Stonehelm",
+                "text": "was killed by a wild beast.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_49589f6f",
+                "actor": "Ingrid Greymantle",
+                "text": "Became a Cultist.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_194ba20c",
+                "actor": "Urist Crowfield",
+                "text": "Became a Guard.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_245cab0a",
+                "actor": "Cedric Silverbrook",
+                "text": "Had a child named Ivar Silverbrook with Erik Embervane.",
+                "type": "birth",
+                "causedBy": null
+            },
+            {
+                "id": "ev_ce9e8bc2",
+                "actor": "Orik Goldmane",
+                "text": "Seized power and became the new Lord.",
+                "type": "power_seizure",
+                "causedBy": null
+            },
+            {
+                "id": "ev_04d17103",
+                "actor": "Orik Goldmane",
+                "text": "Was ousted from the Lord's seat by Rashid Oakheart.",
+                "type": "power_seizure",
+                "causedBy": {
+                    "id": "ev_ce9e8bc2",
+                    "year": 38,
+                    "description": "[Year 38] Seized power and became the new Lord.",
+                    "type": "power_seizure",
+                    "actorName": "Rashid Oakheart"
+                }
+            },
+            {
+                "id": "ev_de9d8cfa",
+                "actor": "Erik Embervane",
+                "text": "Welcomed their child, Ivar Silverbrook.",
+                "type": "birth",
+                "causedBy": null
+            },
+            {
+                "id": "ev_ce9e8bc2",
+                "actor": "Rashid Oakheart",
+                "text": "Seized power and became the new Lord.",
+                "type": "power_seizure",
+                "causedBy": null
+            },
+            {
+                "id": "ev_a066fc70",
+                "actor": "Bjorn Highkeep",
+                "text": "Started a bitter blood feud with Gunnar Grimshaw.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_04da065f",
+                "actor": "Ingrid Stonecroft",
+                "text": "Was ousted from the Lord's seat by Orik Goldmane.",
+                "type": "power_seizure",
+                "causedBy": {
+                    "id": "ev_ce9e8bc2",
+                    "year": 38,
+                    "description": "[Year 38] Seized power and became the new Lord.",
+                    "type": "power_seizure",
+                    "actorName": "Orik Goldmane"
+                }
+            },
+            {
+                "id": "ev_2acf9dec",
+                "actor": "Zorya Blackmere",
+                "text": "Discovered The Void Crown in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_672d1679",
+                "actor": "Cedric Frostholm",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            }
+        ],
+        "Year 39": [
+            {
+                "id": "ev_06c44ca8",
+                "actor": "Sigrid Blackmere",
+                "text": "Started a bitter blood feud with Zorya Blackmere.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_ccc5bb36",
+                "actor": "Urist Crowfield",
+                "text": "Discovered The Crimson Urn in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            }
+        ],
+        "Year 40": [
+            {
+                "id": "ev_ddca00f8",
+                "actor": "Gareth Hawkwood",
+                "text": "Started a bitter blood feud with Bjorn Highkeep.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_96df8210",
+                "actor": "Ulf Crowfield",
+                "text": "Formed a strong bond with Hilda Oakheart.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_6a82825c",
+                "actor": "Rashid Oakheart",
+                "text": "Discovered The Iron Blade in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_b5ca9d39",
+                "actor": "Ingrid Stonecroft",
+                "text": "Started a bitter blood feud with Cedric Silverbrook.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_549bd639",
+                "actor": "Callum Silvertongue",
+                "text": "Started a bitter blood feud with Gunnar Grimshaw.",
+                "type": "rivalry",
+                "causedBy": null
+            }
+        ],
+        "Year 41": [
+            {
+                "id": "ev_827df5c8",
+                "actor": "Hilda Oakheart",
+                "text": "was killed by a wild beast.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_278ed018",
+                "actor": "Carwyn Ironspire",
+                "text": "died of a sudden fever.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_050f295d",
+                "actor": "Ingrid Greymantle",
+                "text": "Started a bitter blood feud with Urist Crowfield.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_7a51b752",
+                "actor": "Gunnar Grimshaw",
+                "text": "Became a Bandit.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_e83ba3eb",
+                "actor": "Rashid Oakheart",
+                "text": "Became a Guard.",
+                "type": "career_shift",
+                "causedBy": null
+            }
+        ],
+        "Year 42": [
+            {
+                "id": "ev_0d80367b",
+                "actor": "Ulf Crowfield",
+                "text": "Started a bitter blood feud with Orik Goldmane.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_666e5c7a",
+                "actor": "Rashid Oakheart",
+                "text": "Discovered The Obsidian Codex in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            }
+        ],
+        "Year 43": [
+            {
+                "id": "ev_d63f335c",
+                "actor": "Gareth Hawkwood",
+                "text": "died of a sudden fever.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4cd7d4a2",
+                "actor": "Zorya Blackmere",
+                "text": "Formed a strong bond with Callum Silvertongue.",
+                "type": "friendship",
+                "causedBy": null
+            }
+        ],
+        "Year 44": [
+            {
+                "id": "ev_a08bdd92",
+                "actor": "Halfdan Stoneheart",
+                "text": "Discovered The Void Idol in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_4fda8615",
+                "actor": "Cedric Silverbrook",
+                "text": "Had a child named Branwen Silverbrook with Erik Embervane.",
+                "type": "birth",
+                "causedBy": null
+            },
+            {
+                "id": "ev_3b571b36",
+                "actor": "Gunnar Grimshaw",
+                "text": "Started a bitter blood feud with Cedric Silverbrook.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_e6d2434d",
+                "actor": "Erik Embervane",
+                "text": "Welcomed their child, Branwen Silverbrook.",
+                "type": "birth",
+                "causedBy": null
+            }
+        ],
+        "Year 45": [
+            {
+                "id": "ev_cbdc56e9",
+                "actor": "Halfdan Stoneheart",
+                "text": "Seized power and became the new Lord.",
+                "type": "power_seizure",
+                "causedBy": null
+            },
+            {
+                "id": "ev_cf177039",
+                "actor": "Cedric Silverbrook",
+                "text": "Discovered The Iron Band in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_d1a156eb",
+                "actor": "Rashid Oakheart",
+                "text": "Became a Cultist.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_d0e7569d",
+                "actor": "Bjorn Highkeep",
+                "text": "Discovered The Astral Signet in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_eb93928c",
+                "actor": "Zorya Blackmere",
+                "text": "Packed their belongings and migrated to coordinates X:85, Y:25.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_5f0b840a",
+                "actor": "Callum Silvertongue",
+                "text": "Discovered The Bone Halberd in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            }
+        ],
+        "Year 46": [
+            {
+                "id": "ev_0bb2dae0",
+                "actor": "Gunnar Grimshaw",
+                "text": "Formed a strong bond with Ulf Crowfield.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_56457604",
+                "actor": "Bjorn Highkeep",
+                "text": "Started a bitter blood feud with Callum Silvertongue.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_83755ce0",
+                "actor": "Ingrid Stonecroft",
+                "text": "Discovered The Crimson Ring in the wilderness.",
+                "type": "artifact_discovery",
+                "causedBy": null
+            },
+            {
+                "id": "ev_e3b351eb",
+                "actor": "Cedric Frostholm",
+                "text": "Became a Bandit.",
+                "type": "career_shift",
+                "causedBy": null
+            }
+        ],
+        "Year 47": [
+            {
+                "id": "ev_bb4a745f",
+                "actor": "Ingrid Greymantle",
+                "text": "Started a bitter blood feud with Cedric Frostholm.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_63f53975",
+                "actor": "Cedric Silverbrook",
+                "text": "was killed by a wild beast.",
+                "type": "death",
+                "causedBy": null
+            },
+            {
+                "id": "ev_c27bb031",
+                "actor": "Erik Embervane",
+                "text": "Inherited belongings from the late Cedric Silverbrook.",
+                "type": "inheritance",
+                "causedBy": {
+                    "id": "ev_63f53975",
+                    "year": 47,
+                    "description": "[Year 47] was killed by a wild beast.",
+                    "type": "death",
+                    "actorName": "Cedric Silverbrook"
+                }
+            },
+            {
+                "id": "ev_0a614edd",
+                "actor": "Cedric Frostholm",
+                "text": "Became a Beggar.",
+                "type": "career_shift",
+                "causedBy": null
+            }
+        ],
+        "Year 48": [
+            {
+                "id": "ev_1e5933ff",
+                "actor": "Ingrid Greymantle",
+                "text": "Packed their belongings and migrated to coordinates X:4, Y:41.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_1e5933ff",
+                "actor": "Gunnar Grimshaw",
+                "text": "Packed their belongings and migrated to coordinates X:4, Y:41.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_87c0039f",
+                "actor": "Erik Embervane",
+                "text": "Was heartbroken by the loss of their love.",
+                "type": "grief",
+                "causedBy": {
+                    "id": "ev_63f53975",
+                    "year": 47,
+                    "description": "[Year 47] was killed by a wild beast.",
+                    "type": "death",
+                    "actorName": "Cedric Silverbrook"
+                }
+            },
+            {
+                "id": "ev_de306042",
+                "actor": "Callum Silvertongue",
+                "text": "Packed their belongings and migrated to coordinates X:51, Y:55.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_35224db8",
+                "actor": "Ivar Silverbrook",
+                "text": "Was grief-stricken by the death of their parent.",
+                "type": "grief",
+                "causedBy": {
+                    "id": "ev_63f53975",
+                    "year": 47,
+                    "description": "[Year 47] was killed by a wild beast.",
+                    "type": "death",
+                    "actorName": "Cedric Silverbrook"
+                }
+            },
+            {
+                "id": "ev_35224db8",
+                "actor": "Branwen Silverbrook",
+                "text": "Was grief-stricken by the death of their parent.",
+                "type": "grief",
+                "causedBy": {
+                    "id": "ev_63f53975",
+                    "year": 47,
+                    "description": "[Year 47] was killed by a wild beast.",
+                    "type": "death",
+                    "actorName": "Cedric Silverbrook"
+                }
+            },
+            {
+                "id": "ev_65ff358f",
+                "actor": "Astrid Coppergate",
+                "text": "Arrived in town seeking a new life.",
+                "type": "immigration",
+                "causedBy": null
+            }
+        ],
+        "Year 49": [
+            {
+                "id": "ev_e8fed406",
+                "actor": "Halfdan Stoneheart",
+                "text": "Became a Merchant.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_a2f2b54d",
+                "actor": "Urist Crowfield",
+                "text": "Became a Bandit.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_58164e08",
+                "actor": "Rashid Oakheart",
+                "text": "Became a Scholar.",
+                "type": "career_shift",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f797d606",
+                "actor": "Cedric Frostholm",
+                "text": "Started a bitter blood feud with Ingrid Stonecroft.",
+                "type": "rivalry",
+                "causedBy": null
+            }
+        ],
+        "Year 50": [
+            {
+                "id": "ev_b2ee1e84",
+                "actor": "Erik Embervane",
+                "text": "Started a bitter blood feud with Orik Goldmane.",
+                "type": "rivalry",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f1724149",
+                "actor": "Urist Darkwater",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f1724149",
+                "actor": "Elowen Crowfield",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f1724149",
+                "actor": "Rowena Wintershield",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_590a85db",
+                "actor": "Rowena Wintershield",
+                "text": "Fell deeply in love with Rashid Oakheart.",
+                "type": "romance",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f1724149",
+                "actor": "Nerys Highkeep",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f1724149",
+                "actor": "Zorya Ashbrook",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_84a043fe",
+                "actor": "Zorya Ashbrook",
+                "text": "Formed a strong bond with Ivar Silverbrook.",
+                "type": "friendship",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f1724149",
+                "actor": "Declan Ashfall",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f1724149",
+                "actor": "Caspian Ironspire",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            },
+            {
+                "id": "ev_f1724149",
+                "actor": "Hadrian Rockhollow",
+                "text": "Arrived as a refugee seeking shelter.",
+                "type": "migration",
+                "causedBy": null
+            }
+        ],
+        "Year 51": [
+            {
+                "id": "ev_3e914418",
+                "actor": "Ironford",
+                "text": "The traveler abdicated, and the people elected Rowena Wintershield as the new Lord.",
+                "type": "power_seizure",
+                "causedBy": null
+            }
+        ]
+    }
+}

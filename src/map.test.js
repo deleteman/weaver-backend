@@ -1,4 +1,22 @@
 // src/map.test.js
+
+// Mock the DB module so tests never touch the SQLite file.
+// Default return values match what the real DB returns for an unvisited coordinate.
+jest.mock('./db', () => ({
+    getDeltas: jest.fn().mockReturnValue([]),
+    getGlobalYear: jest.fn().mockReturnValue(51),
+    getParentCity: jest.fn().mockReturnValue(null),
+}));
+
+const db = require('./db');
+
+// Reset all mocks to their defaults before every test so state doesn't leak.
+beforeEach(() => {
+    db.getDeltas.mockReturnValue([]);
+    db.getGlobalYear.mockReturnValue(51);
+    db.getParentCity.mockReturnValue(null);
+});
+
 const {
     determineBiome,
     generateTownName,
@@ -508,6 +526,73 @@ describe('Map Module - Fog of War Mini-Map Feature', () => {
                 expect(miniMap.gridSize).toBe(expectedSize);
                 expect(miniMap.grid.length).toBe(expectedSize * expectedSize);
             }
+        });
+    });
+
+    // ===== District Ruler / Tier Fallback Tests =====
+    describe('getTownRulerAndTier — district tile behavior', () => {
+        it('returns the parent ruler when the tile is a district with no own currentMayor delta', () => {
+            db.getDeltas.mockImplementation(coord => {
+                if (coord === 'world_X5_Y5') return [{ state_key: 'political', state_value: '{"tier":5}' }];
+                if (coord === 'world_X0_Y0') return [{ state_key: 'currentMayor', state_value: 'Alice the Bold' }];
+                return [];
+            });
+            db.getParentCity.mockReturnValue('world_X0_Y0');
+
+            const { ruler } = getTownRulerAndTier(5, 5);
+            expect(ruler).toBe('Alice the Bold');
+        });
+
+        it('forces tier 1 for a district regardless of inherited political tier', () => {
+            db.getDeltas.mockImplementation(coord => {
+                if (coord === 'world_X5_Y5') return [{ state_key: 'political', state_value: '{"tier":5}' }];
+                return [];
+            });
+            db.getParentCity.mockReturnValue('world_X0_Y0');
+
+            const { tier } = getTownRulerAndTier(5, 5);
+            expect(tier).toBe(1);
+        });
+
+        it('returns "Unknown" when district parent has no currentMayor delta yet', () => {
+            db.getDeltas.mockImplementation(coord => {
+                if (coord === 'world_X5_Y5') return [{ state_key: 'political', state_value: '{"tier":5}' }];
+                if (coord === 'world_X0_Y0') return [{ state_key: 'political', state_value: '{"tier":5}' }];
+                return [];
+            });
+            db.getParentCity.mockReturnValue('world_X0_Y0');
+
+            const { ruler } = getTownRulerAndTier(5, 5);
+            expect(ruler).toBe('Unknown');
+        });
+
+        it('sovereign tile uses its own currentMayor delta and saved tier (no parent)', () => {
+            db.getDeltas.mockImplementation(coord => {
+                if (coord === 'world_X3_Y3') {
+                    return [
+                        { state_key: 'currentMayor', state_value: 'Bob the Mayor' },
+                        { state_key: 'political', state_value: '{"tier":3}' },
+                    ];
+                }
+                return [];
+            });
+            db.getParentCity.mockReturnValue(null);
+
+            const { ruler, tier } = getTownRulerAndTier(3, 3);
+            expect(ruler).toBe('Bob the Mayor');
+            expect(tier).toBeGreaterThanOrEqual(3);
+        });
+
+        it('isDbConfirmed reflects political delta, not mayor delta', () => {
+            db.getDeltas.mockImplementation(coord => {
+                if (coord === 'world_X5_Y5') return [{ state_key: 'political', state_value: '{"tier":5}' }];
+                if (coord === 'world_X0_Y0') return [{ state_key: 'currentMayor', state_value: 'Alice' }];
+                return [];
+            });
+            db.getParentCity.mockReturnValue('world_X0_Y0');
+
+            const { isDbConfirmed } = getTownRulerAndTier(5, 5);
+            expect(isDbConfirmed).toBe(true);
         });
     });
 

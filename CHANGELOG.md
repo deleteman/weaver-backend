@@ -7,11 +7,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Chronicle Summary endpoint** (`GET /api/chunk/:x/:y/chronicle/summary`): rule-based narrative analysis of a settlement's event timeline, with two focus modes:
+  - `?focus=ruler` — reconstructs the full political history: each ruler's title, tenure, how they gained and lost power, notable events during their reign, fate after leaving office, and a list of turbulent years where power changed hands multiple times in a single year.
+  - `?focus=person&name=NAME` — biographical summary for a named NPC including lifespan, career history, relationships (friendships/romances/rivals), artifacts held, political power achieved, and a recursive genealogical lineage tree (up to 4 generations of ancestors and descendants).
+- `src/chronicle-summary.js`: pure-function summarizer module — no ECS, no DB, fully deterministic. Exports `summarizeRulerHistory`, `summarizePerson`, `buildLineageNode`, and all helper text-extraction functions for testability.
+- `src/chronicle-summary.test.js`: 35 test cases covering `flattenTimeline`, `classifyPowerEvent`, `extractTitleFromText`, `extractElectedName`, `extractTargetName`, `extractChildName`, `extractArtifactName`, `extractChildren`, `extractParents`, `buildLineageNode`, `summarizeRulerHistory`, and `summarizePerson` — including fixture-based tests against the Ironford chronicle.
+- Refactored the `/chronicle` route handler in `index.js`: the inner timeline-building loop is now a shared `buildChronicleTimeline(x, y)` helper used by both `/chronicle` and the new `/chronicle/summary` route.
+- **Folklore & Mythos System** (item 14): Towns now track `mythos.temporalExposure` — a cumulative anomaly score incremented by player actions (steal +3, assassinate +20, quest/trade +5). When exposure exceeds 50, `simulateHistory()` generates a `shadow` or `savior` legend based on whether the player's history at the coordinate is predominantly violent or benevolent.
+- `mythos.fearModifier` (0.0–2.0) is set to 2.0 on shadow legends; Merchant buy/sell prices are now doubled in shadow-legend towns via the existing `executeTrade()` stubs.
+- Savior path spawns a `savior_cult` Faction entity, or links to an existing `ancestral_reverence` Mystery Cult (from item 13) if one already exists at the coordinate.
+- `erosion_check()` in `src/history.js`: every 50 years without a player visit, `temporalExposure` decays by 25. Dropping below 20 disbands the Cult faction and nulls `activeLegend` and `fearModifier`.
+- Cult tithe accumulation in `simulate_economy()`: when a Savior cult is active, `mythos.titheAccumulated` grows by 5% of `regionalWealth` per decade since last visit.
+- `last_visit_year` delta written on every `GET /api/chunk/:x/:y` visit — consumed by the erosion and tithe subsystems.
+- 7 new tests in `src/history.test.js` covering shadow/savior legend generation, threshold boundary, erosion decay, cult disband, Mystery Cult linking, and tithe accumulation.
+
+- Snapshot checkpointing system: ECS state is persisted to SQLite after each chunk load, enabling a fast-path Future Pass that simulates only years since the last snapshot instead of re-simulating from Year 51 every time.
+- `src/snapshot.js`: ECS serialization/deserialization module — `serializeECSState()` and `deserializeECSState()` — with three sub-groups: NPCs, Towns/Districts, Factions.
+- `src/snapshot.test.js`: 10 round-trip tests covering Town, NPC, Faction, Merchant, District, and multi-coordinate isolation.
+- `snapshots` table in SQLite with a unique index on `(coordinate, year)`.
+- Index on `deltas(coordinate)` for faster delta reads.
+
+### Fixed
+- `/api/map` and `/api/chunk` reporting `ruler: "none"` after a player took and abdicated the throne (bug-files/bugged-chronicle-ruler.json). Four interacting defects in `currentMayor` flow were corrected:
+  - `claimThrone()` in `src/actions.js` now updates `town.currentMayor = "The Player"` in ECS memory before saving the delta — matching the pattern already used by `assassinate()` and `regicide()`. Previously the stale in-memory value was written back by `unloadCoordinate()` as a newer delta, clobbering the claim.
+  - `unloadCoordinate()` in `index.js` now uses `upsertDelta` (not `saveDelta`) for the Town `currentMayor` row, so repeat visits no longer pile up duplicate rows that later outrank legitimate claim/abdicate deltas.
+  - `injectImmigrantsAndApplyDeltas()` in `index.js` now applies only the newest `currentMayor` delta per entity (via a `mayorAppliedFor` Set), matching `/api/map`'s `find()`-based newest-wins semantics. Previously the chunk pipeline iterated every match in newest-first order and the oldest value won — causing the chunk endpoint and the map endpoint to disagree on the same data.
+  - `isMayor()` in `src/actions.js` now cross-checks `town.currentMayor === "The Player"` from world state instead of trusting only the client-supplied `playerState.titles`. This closes the gap that allowed a stale or tampered client title (e.g. carried over from a previous session before the DB was wiped) to authorise mayor-only actions like `abdicate` against a throne the player never legitimately claimed.
+- `/api/map` always returning `ruler: "Unknown"` for every tile, even after visiting. District tiles inherit the parent city's tier in their `political` delta; `getTownRulerAndTier` was treating them as high-tier (e.g., tier 5) settlements, letting them claim and stamp "Unknown" across the entire mini-map radius. Two fixes in `src/map.js`: (1) when no `currentMayor` delta is found, fall back to the parent city's delta via `getParentCity`; (2) force `tier = 1` for any tile with a DB-confirmed parent so districts never act as territory-claiming owners in `computeOwnership`.
+
+### Changed
+- Future Pass now restores from the nearest snapshot (year ≤ globalYear) instead of re-simulating from Year 51 on every request; only the remaining years since the snapshot are simulated.
+- Both chunk-load paths (standard town and district) participate in the snapshot system.
+- `livingNpcs` array in `simulateHistory()` is now built once before the year loop and maintained incrementally (filter on death/migration, push on birth/immigration/replenishment), eliminating the O(ECS world size) ECS query that previously ran on every simulated year.
+- `replenishPopulationIfNeeded()` now returns the newly spawned NPC entities so the caller can extend the cached `livingNpcs` array without an additional ECS query.
+- `SNAPSHOT_INTERVAL` constant (`10` years) controls the minimum gap between snapshot writes; loads within the interval reuse the existing snapshot.
+
+### Removed
+- `MAX_FUTURE_YEARS = 500` hard cap — world age is now unbounded. The snapshot system bounds per-request simulation cost to at most `SNAPSHOT_INTERVAL` years regardless of total world age.
 - `CONQUEST_TYPES` constant (`{ ANNEXATION, SUBJUGATION }`) exported from `src/politics.js` for type-safe conquest state references.
 - `NPC_ROLES` constant exported from `src/politics.js` covering `Mayor`, `Puppet`, `Guard`, `Hero`, `Citizen`.
 - New `src/politics.test.js` with full coverage of `resolveConflict()` outcomes, conquest delta writing, promotion, demotion, and the new constants.
 
 ### Fixed
+- **CHUNK_LOAD_ERROR on district tiles**: `loadAsDistrict()` called `districtEntity.currentMayor = parentMayor` without guarding against `districtEntity` being `undefined` — which occurred when the District entity was added to the ECS world without a `currentMayor` field, causing miniplex to exclude it from the `world.with('identity', 'currentMayor')` archetype. Added a null guard so the assignment is skipped when the entity is not found.
+- **CHUNK_LOAD_ERROR during NPC power seizure**: `history.js` assigned `townEntity.currentMayor = actor.identity.name` in the career-shift seizure branch without guarding against `townEntity` being `undefined` (same archetype miss root cause). Added a null guard; `actor.currentRole` is still set unconditionally so the NPC's own state is always correct.
+- **District reconciliation ignored non-Mayor ruler titles**: `loadAsDistrict()` demoted locally-promoted NPCs by checking `e.currentRole === 'Mayor'`, which silently skipped Lords, Magistrates, and Kings promoted at District coordinates. Changed to `RULER_TITLES.includes(e.currentRole)` to cover all tier-based titles.
+
 - **Mayors in districts (Gap 1 — conquest outcomes never applied)**: `resolveConflict()` computed `loserMayorKilled` and `loserMayorState: 'Puppet'` but never persisted them. The method now accepts an optional `loserCoordinate` and writes a `conquest_type` delta (`"annexation"` or `"subjugation"`) to the loser's coordinate so downstream passes can act on it.
 - **Mayors in districts (Gap 2 — NPC roles not cleaned up)**: `loadAsDistrict()` correctly set `districtEntity.currentMayor` to the parent's ruler but did not touch NPC entities. The Legends/Future passes could promote a local NPC to `currentRole === "Mayor"`, leaving a visible "Mayor" in a district the player could never rule. After simulation, `loadAsDistrict()` now reads the `conquest_type` delta and reconciles all local Mayor NPCs: `"annexation"` (or organic expansion) marks them `Dead`; `"subjugation"` demotes them to `"Puppet"`. Both outcomes write a delta and push a history event.
 - **King title grants no powers (Gap 3 — isMayor() strict check)**: After a successful regicide the player received `playerState.titles[townName] = "King"` but `isMayor()` only checked `=== "Mayor"`, silently stripping the player of all ruler actions (tax, banish, abdicate, decree). `RULER_TITLES` constant (`["Mayor", "King"]`) added to `src/actions.js`; `isMayor()` now uses `RULER_TITLES.includes()` so both titles grant ruler access.

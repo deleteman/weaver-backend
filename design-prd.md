@@ -35,6 +35,8 @@ When a client requests `GET /api/chunk/:x/:y`, the engine executes a strict 4-pa
 
 4. **The Future Pass:** The engine calculates `globalYear - 51`. If greater than 0, it runs the simulation forward by that many years to catch the chunk up to the present global moment.
 
+**Pipeline timing note for Mythos:** The `mythos` delta (accumulated `temporalExposure` from prior player visits) is applied during the Delta Pass, which runs before the Future Pass in `loadCoordinate`. However, because the Future Pass simulation ends before quest generation, the engine also runs a **post-delta legend check** immediately after `injectImmigrantsAndApplyDeltas`. This check calls `checkMythosLegend()` (exported from `src/history.js`) once the live `temporalExposure` value is available. This ensures the legend activates on the first chunk load where `temporalExposure > 50` — not only during `advance_time` simulation runs, where the decade-boundary check inside `simulateHistory()` serves the same role.
+
 ### 3.2. Entity-Component System (ECS)
 
 The engine utilizes `miniplex`. Every actor, town, and child is an entity composed of data components:
@@ -49,7 +51,8 @@ The engine utilizes `miniplex`. Every actor, town, and child is an entity compos
 | `Status` | `state` (enum) | `Alive`, `Dead`, `Migrated`, `Exiled`. | 
 | `Political` | `tier` (int), `demographics` | Tracks settlement size (1-5) and dominant traits (e.g., "Scholar Heavy"). | 
 | `Diplomacy` | `allies`, `colonies`, `suzerain` | Arrays of Coordinate keys mapping macro-level relationships. | 
-| `Economy` (Town fields) | `regionalWealth`, `primaryExport`, `tradePartners`, `economicModifiers` | Settlement-level economic state. `regionalWealth` seeded at `tier × 500`. `primaryExport` is one good from `BIOME_PRIMARY_EXPORT`, deterministic per coordinate. `tradePartners` is an array of coordinate keys (seeded for Tier 3+ towns). `economicModifiers` tracks `{ shortage, hyperinflation, hyperinflationExpiryYear, economicBoomYear }`. | 
+| `Economy` (Town fields) | `regionalWealth`, `primaryExport`, `tradePartners`, `economicModifiers` | Settlement-level economic state. `regionalWealth` seeded at `tier × 500`. `primaryExport` is one good from `BIOME_PRIMARY_EXPORT`, deterministic per coordinate. `tradePartners` is an array of coordinate keys (seeded for Tier 3+ towns). `economicModifiers` tracks `{ shortage, hyperinflation, hyperinflationExpiryYear, economicBoomYear }`. |
+| `Mythos` (Town fields) | `temporalExposure`, `activeLegend`, `cultFaction`, `fearModifier`, `titheAccumulated` | The world's memory of the Traveler. **`temporalExposure`** (int, 0+) is a cumulative anomaly score incremented by player actions: steal +3, assassinate +20, complete quest or trade +5, bury capsule or gift +10. Persisted as a `mythos` delta (JSON blob on the town entity, keyed by `state_key = 'mythos'`). **Legend activation** (`checkMythosLegend()` in `src/history.js`): when `temporalExposure > 50` and no legend is active, the engine counts violent deltas (`assassinated_leader`, `assassinated_merchant_hub`) vs. benevolent deltas (`capsule_*`, `plutocracy_candidate`). Violent ≥ benevolent → `activeLegend = 'shadow'` (`fearModifier: 2.0`, doubles Merchant buy prices and halves sell prices). Benevolent > violent → `activeLegend = 'savior'` (spawns a `savior_cult` Faction; links to an existing `ancestral_reverence` Mystery Cult if one is present). `activeLegend` is set by `checkMythosLegend()` — never directly by action handlers. **`fearModifier`** defaults to `1` (neutral, no price change); only the shadow legend raises it to `2.0`. Applied as a multiplier to Merchant prices via `||` fallback (`fearModifier || 1.0`) to guard against legacy `0`-valued deltas. **Erosion:** `temporalExposure` decays by 25 every 50 years without a player visit (`erosion_check()`); dropping below 20 disbands the legend (`activeLegend = null`, `cultFaction = null`, `fearModifier = 1`). **`titheAccumulated`**: active Savior cults accumulate 5% of `regionalWealth` per decade since last visit, computed during each `advance_time` run. | 
 | `Merchant` (NPC fields, Merchant role only) | `personalWealth`, `merchantInventory` | Merchant-specific economic state seeded at NPC generation. `personalWealth`: integer in range 500–3000, seeded from the chunk RNG. `merchantInventory`: array of trade slots `{ itemId, name, tier, quantity, price, type }` — 4–8 slots of the settlement's `primaryExport` resource plus 1–2 random artifacts (generated via `generateMerchantInventory()` from `src/items.js`). Both fields are persisted as deltas and re-applied on load. | 
 | `sex` (NPC field) | `'male'` \| `'female'` \| `'other'` | Assigned deterministically at creation via the seeded RNG (thresholds: < 0.48 → `'male'`, < 0.96 → `'female'`, else → `'other'`). Legacy NPCs loaded from old deltas without a `sex` field default to `'other'`. Only heterosexual (`male` + `female`) couples, or any couple where either partner is `'other'`, can produce children during simulation. Same-sex couples can still form via the romance system. |
 
@@ -188,6 +191,24 @@ Quests are **not persisted**. They are regenerated deterministically on every ch
 
 Settlements progress through tiers: **Town (1x1)** -> **Small City (2x2)** -> **Full City (3x3)** -> **Magistrate** -> **Kingdom**.
 
+### 5.0. Ruler Titles (Tier-Gated)
+
+Each settlement tier maps to a specific ruler title for NPCs and players. The `currentRole` of the ruling NPC and the `playerState.titles` entry both use this title:
+
+| Tier | Settlement | Ruler Title |
+|------|-----------|-------------|
+| 1 | Town | Mayor |
+| 2 | SmallCity | Mayor |
+| 3 | FullCity | Lord |
+| 4 | Magistrate | Magistrate |
+| 5 | Kingdom | King |
+
+**Rules:**
+- A tier-5 (Kingdom) settlement has a `King`, not a `Mayor`. Visiting such a tile will always show a ruling NPC with `currentRole === "King"`.
+- District tiles **never** generate a local ruler NPC. Their ruler is always the parent city's ruler, inherited from the parent's `currentMayor` delta.
+- All ruler-gated player actions (tax, decree, banish, abdicate) accept any tier-based ruler title, not only "Mayor".
+- The `rulerTitle` field returned by `/api/chunk` is derived from the settlement's current tier (see `getRulerTitle()` in `src/politics.js`).
+
 ### 5.1. Territory Claiming (Tile Expansion)
 
 When a town levels up to a Small City, it must claim adjacent tiles.
@@ -200,7 +221,7 @@ When a town levels up to a Small City, it must claim adjacent tiles.
 
 * **District Mayor Inheritance:** A District's ruler is always read from the parent's saved `currentMayor` delta at load time. The district never stores its own `currentMayor` persistently — only the parent's saved value is authoritative.
 
-* **District NPC Mayor Reconciliation:** After the Legends/Future passes run inside a district, `loadAsDistrict()` reconciles any local NPC that simulation promoted to `currentRole === "Mayor"`. The reconciliation reads the `conquest_type` delta for the coordinate and applies the appropriate fate: `"annexation"` → NPC is marked `Dead` (executed when annexed); `"subjugation"` → NPC is demoted to `currentRole: "Puppet"` (surviving puppet administrator). Organic expansion with no conquest delta also marks the local Mayor Dead. A `Puppet` NPC represents a subjugated mayor — the player may kill them, but doing so does not grant a new ruler title; only the parent city's ruler can be deposed to change control of the district.
+* **District NPC Ruler Reconciliation:** After the Legends/Future passes run inside a district, `loadAsDistrict()` reconciles any local NPC that simulation promoted to a ruler role (any title in `RULER_TITLES`). The reconciliation reads the `conquest_type` delta for the coordinate and applies the appropriate fate: `"annexation"` → NPC is marked `Dead` (executed when annexed); `"subjugation"` → NPC is demoted to `currentRole: "Puppet"` (surviving puppet administrator). Organic expansion with no conquest delta also marks the local ruler Dead. A `Puppet` NPC represents a subjugated administrator — the player may kill them, but doing so does not grant a new ruler title; only the parent city's ruler can be deposed to change control of the district.
 
 ### 5.2. Conflict Resolution (The Math of War)
 
@@ -290,7 +311,7 @@ Both fields are persisted as deltas after every trade and re-applied from the De
 | `transaction.quantity` | Must not exceed the slot's available `quantity` (buy only) |
 | Player gold | Must be ≥ `slot.price × quantity` (buy); gold is never driven negative |
 
-**Buy price:** `Math.floor(slot.price × quantity × fearModifier)` — `fearModifier` defaults to `1.0` and will be driven by `town.mythos.fearModifier` once item 14 (Folklore & Mythos) is implemented.
+**Buy price:** `Math.floor(slot.price × quantity × fearModifier)` — `fearModifier` is `town.mythos.fearModifier` (defaults to `0`; Shadow legend sets it to `2.0`, doubling Merchant prices).
 
 **Sell price:** `Math.floor((item.price || item.value) × 0.8 / fearModifier)` — 80% of face value, divided by `fearModifier` (Shadow legend reduces payouts).
 
@@ -525,4 +546,115 @@ Each Faction entity carries:
 - `targetLineage` — the ID the faction is bound to (rival, debtor, relic, etc.)
 
 Full inheritance chains for each member are reconstructed on demand by `GET /api/chunk/:x/:y/lineage`. Dead NPCs remain in the ECS world with `status: 'Dead'` and their `ancestralMemories` intact so the chain can be walked backward.
+
+## 11. Chronicle Summary — Narrative Analysis Engine
+
+### 11.1. Overview
+
+The raw `/chronicle` endpoint exposes every simulated event in flat, year-by-year form. While complete, it requires significant manual parsing to extract coherent narratives. The **Chronicle Summary** feature adds a rule-based analysis layer that transforms this raw event stream into structured, human-readable summaries — without any LLM involvement. All analysis is pure, deterministic computation over the existing event data.
+
+The endpoint is: `GET /api/chunk/:x/:y/chronicle/summary`
+
+Two focus modes are available via the `?focus=` query parameter.
+
+### 11.2. Gameplay Benefits
+
+**Ruler History (`?focus=ruler`):** Reconstructs the full political timeline of a settlement — who held power, for how long, how they gained and lost it, and any turbulent years where power changed hands multiple times. This gives players and storytellers a concise political biography of a settlement without having to read 50+ years of raw events.
+
+- **Political strategy:** Players scouting a settlement for conquest can immediately see the current ruler's tenure length, prior coups, and the settlement's overall political stability before committing to a regicide.
+- **World building:** Dungeon masters and narrative designers using Weaver as a world-building tool get a ready-made political history that can be narrated directly or adapted for lore.
+- **Post-conquest context:** After a player seizes power, the ruler history clearly shows how their reign fits into the broader arc — were they the ninth ruler in forty years, or a rare long-reigning monarch?
+
+**Person Summary (`?focus=person&name=NAME`):** Produces a biographical snapshot for any NPC — careers, relationships (friendships, romances, rivalries), artifacts held, political power achieved, and cause of death — plus a full genealogical lineage tree traversing ancestors and descendants up to `MAX_LINEAGE_DEPTH` generations.
+
+- **NPC depth perception:** Before interacting with an NPC (trade, assassination, romance), players can understand who they're dealing with: a mild-mannered scholar who secretly ruled the town for a decade, or a newcomer with no roots and nothing to lose.
+- **Bloodline tracking:** The lineage tree exposes family dynasties and multi-generational feuds. A player who assassinated a patriarch can trace exactly which living descendants inherited the grudge.
+- **Quest hooks:** GMs can query the summary of a deceased NPC's last known rival to find who might have motivation to reward the player for revenge, or who stands to inherit a power vacuum.
+
+### 11.3. Technical Approach
+
+The summarizer operates on the `timeline` object directly — the same structure returned by `/chronicle`. No ECS queries, no database access, no randomness. This makes the endpoint stateless, fast (pure JS object traversal), and trivially testable.
+
+Key algorithmic components (implemented in `src/chronicle-summary.js`):
+
+| Function | Purpose |
+|----------|---------|
+| `flattenTimeline(timeline)` | Parse the nested year-keyed object into a flat, sorted `NormalizedEvent[]` |
+| `classifyPowerEvent(event)` | Determine whether a power event is GAIN, LOSE, ABDICATE, etc. |
+| `summarizeRulerHistory(timeline)` | Two-pass ruler slot construction + turbulent-year detection |
+| `summarizePerson(timeline, name)` | Biographical extraction + recursive lineage tree |
+| `buildLineageNode(events, name, dir, depth, visited)` | Depth-limited, cycle-safe lineage recursion |
+
+All string matching is done against named constants (no inline magic strings). Title extraction is kept in sync with `TIER_RULER_TITLES` from `src/politics.js`.
+
+### 11.4. Ruler History Output Contract
+
+```json
+{
+  "type": "ruler_history",
+  "rulers": [
+    {
+      "name": "Sylas Deepforge",
+      "title": "Magistrate",
+      "seizedPowerYear": 4,
+      "leftOfficeYear": 13,
+      "tenure": 9,
+      "leftOfficeReason": "ousted",
+      "oustedBy": "Lysander Coppergate",
+      "diedInOffice": null,
+      "fateAfterOffice": { "year": 34, "cause": "passed away peacefully in their sleep." },
+      "notableEventsWhileRuling": []
+    }
+  ],
+  "turbulentYears": [
+    { "year": 24, "rulerCount": 3, "description": "3 rulers seized power in Year 24" }
+  ]
+}
+```
+
+`leftOfficeReason` values: `"seized"`, `"ousted"`, `"abdicated"`, `"claimed_empty_throne"`, `"died_in_office"`, `"still_ruling"`, `"unknown"`.
+
+### 11.5. Person Summary Output Contract
+
+```json
+{
+  "type": "person_summary",
+  "name": "Grom Marshborn",
+  "lifespan": { "arrivedYear": 10, "diedYear": null, "cause": null },
+  "careers": ["Cultist", "Beggar", "Bandit"],
+  "relationships": {
+    "friendships": ["Fenwick Stonehelm", "Niamh Grimshaw"],
+    "romances": ["Zara Swiftstream"],
+    "rivals": []
+  },
+  "power": [],
+  "artifacts": [],
+  "lineage": {
+    "name": "Grom Marshborn",
+    "lifespan": { "arrivedYear": 10, "diedYear": null, "cause": null },
+    "careers": ["Cultist", "Beggar", "Bandit"],
+    "power": [],
+    "parents": [],
+    "children": [
+      {
+        "name": "Seren Marshborn",
+        "lifespan": { "arrivedYear": 13, "diedYear": null, "cause": null },
+        "careers": [],
+        "power": [],
+        "parents": [],
+        "children": []
+      }
+    ]
+  }
+}
+```
+
+### 11.6. Error Responses
+
+| Code | HTTP | Meaning |
+|------|------|---------|
+| `INVALID_FOCUS` | 400 | `?focus=` missing or not one of `ruler`, `person` |
+| `MISSING_NAME` | 400 | `focus=person` but `?name=` not provided |
+| `PERSON_NOT_FOUND` | 404 | No chronicle events found for the requested person name |
+| `CHRONICLE_SUMMARY_ERROR` | 500 | Coordinate load failure or unexpected error |
 

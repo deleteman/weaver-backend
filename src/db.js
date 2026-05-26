@@ -17,7 +17,20 @@ db.exec(`
     entity_name TEXT,
     state_key TEXT,
     state_value TEXT
-  )
+  );
+  CREATE INDEX IF NOT EXISTS idx_deltas_coord ON deltas(coordinate);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS snapshots (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    coordinate  TEXT    NOT NULL,
+    year        INTEGER NOT NULL,
+    state_blob  TEXT    NOT NULL,
+    created_at  INTEGER NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_snapshots_coord_year
+    ON snapshots(coordinate, year);
 `);
 
 db.exec(`
@@ -142,5 +155,23 @@ function getJournal({ coordinate, npcId, itemId, fromYear, toYear, limit = JOURN
     return { entries, total };
 }
 
-module.exports = { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, getSuzerainForCoordinate, getCapsuleDeltas, getRuinHoard, appendJournalEntry, getJournal };
+function saveSnapshot(coordinate, year, stateBlob) {
+    const stmt = db.prepare(
+        'INSERT OR REPLACE INTO snapshots (coordinate, year, state_blob, created_at) VALUES (?, ?, ?, ?)'
+    );
+    stmt.run(coordinate, year, stateBlob, Date.now());
+    log('saveSnapshot', { coordinate, year });
+}
+
+function loadLatestSnapshot(coordinate, targetYear) {
+    const stmt = db.prepare(
+        'SELECT year, state_blob FROM snapshots WHERE coordinate = ? AND year <= ? ORDER BY year DESC LIMIT 1'
+    );
+    const row = stmt.get(coordinate, targetYear);
+    if (!row) return null;
+    log('loadLatestSnapshot', { coordinate, targetYear, snapshotYear: row.year });
+    return { year: row.year, stateBlob: row.state_blob };
+}
+
+module.exports = { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, getSuzerainForCoordinate, getCapsuleDeltas, getRuinHoard, appendJournalEntry, getJournal, saveSnapshot, loadLatestSnapshot };
 

@@ -7,7 +7,9 @@ const crypto = require('crypto');
 const { generateArtifact, generateMerchantInventory } = require('./items');
 const { determineBiome } = require('./biomes');
 const { replenishPopulationIfNeeded } = require('./population');
-const { PoliticalEngine } = require('./politics');
+const { PoliticalEngine, getRulerTitle, TIER_RULER_TITLES } = require('./politics');
+
+const ALL_RULER_TITLES = new Set(Object.values(TIER_RULER_TITLES));
 const { saveDelta, getTierForCoordinate, upsertDelta, getDeltas } = require('./db');
 const { simulate_economy, lockRuinHoard } = require('./economy');
 const { getAdjacentTiles } = require('./map');
@@ -43,6 +45,16 @@ const REVERENCE_CULT_MIN_YEARS = 100;
 const MEMORIAL_ORDER_MIN_YEARS = 100;
 const INHERITED_INTENSITY_DIVISOR = 2;
 const DEBT_TRIBUTE_RATE = 0.05;
+
+// Folklore & Mythos constants (item 14)
+const MYTHOS_EXPOSURE_LEGEND_THRESHOLD = 50;
+const MYTHOS_FEAR_SHADOW = 2.0;
+const MYTHOS_DECAY_PERIOD_YEARS = 50;
+const MYTHOS_DECAY_AMOUNT = 25;
+const MYTHOS_DECAY_MIN = 0;
+const MYTHOS_DISBAND_THRESHOLD = 20;
+const MYTHOS_TITHE_RATE = 0.05;
+const MYTHOS_DEFAULT = { temporalExposure: 0, activeLegend: null, cultFaction: null, fearModifier: 1, titheAccumulated: 0 };
 
 const LOVE_MEMORY_INTENSITY = 9;
 const HATE_MEMORY_INTENSITY = 8;
@@ -158,6 +170,26 @@ function propagate_memories(npc, livingNpcs, globalYear) {
     }
 }
 
+function erosion_check(townEntity, coordinateKey, currentYear, lastVisitYear, pushEvent) {
+    if (!townEntity?.mythos) return;
+    const yearsSince = currentYear - lastVisitYear;
+    const periods = Math.floor(yearsSince / MYTHOS_DECAY_PERIOD_YEARS);
+    townEntity.mythos.temporalExposure = Math.max(
+        MYTHOS_DECAY_MIN,
+        townEntity.mythos.temporalExposure - (periods * MYTHOS_DECAY_AMOUNT)
+    );
+
+    if (townEntity.mythos.activeLegend !== null && townEntity.mythos.temporalExposure < MYTHOS_DISBAND_THRESHOLD) {
+        townEntity.mythos.activeLegend = null;
+        townEntity.mythos.cultFaction = null;
+        townEntity.mythos.fearModifier = 1;
+        pushEvent(townEntity, makeEvent(
+            `[Year ${currentYear}] The old tales faded into children's stories.`, 'legend'
+        ));
+        upsertDelta(coordinateKey, townEntity.identity.name, 'mythos', JSON.stringify(townEntity.mythos));
+    }
+}
+
 function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYear = 1) {
     log('simulateHistory:start', { targetX, targetY, totalYears, startYear });
     const townEntity = world.with('identity', 'currentMayor').where(e => (e.identity.type === "Town" || e.identity.type === "District") && e.location.x === targetX && e.location.y === targetY).first;
@@ -178,14 +210,20 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
         townEntity.population = 0;
     }
 
+    // Build the living-NPC array once; maintain it incrementally to avoid a full
+    // ECS query (O(world size)) on every simulated year.
+    let livingNpcs = Array.from(world.with('identity', 'status', 'knowledge', 'history', 'inventory', 'description', 'location', 'currentRole')
+        .where(e => e.location.x === targetX && e.location.y === targetY && e.identity.type === "NPC" && e.status === "Alive"));
+
     for (let currentYear = startYear; currentYear < startYear + totalYears; currentYear++) {
+        // Prune dead/migrated NPCs accumulated in previous years
+        livingNpcs = livingNpcs.filter(n => n.status === "Alive");
+
         // Check for population replenishment every decade
         if (currentYear % 10 === 0) {
-            replenishPopulationIfNeeded(world, targetX, targetY, rng, townEntity, biome, currentYear);
+            const replenished = replenishPopulationIfNeeded(world, targetX, targetY, rng, townEntity, biome, currentYear);
+            if (replenished.length > 0) livingNpcs.push(...replenished);
         }
-
-        let livingNpcs = Array.from(world.with('identity', 'status', 'knowledge', 'history', 'inventory', 'description', 'location', 'currentRole')
-            .where(e => e.location.x === targetX && e.location.y === targetY && e.identity.type === "NPC" && e.status === "Alive"));
 
         if (rng() < 0.15) {
             const name = generateText(rng, "#npcName#");
@@ -220,7 +258,11 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
 
         // Run economy simulation every decade
         if (townEntity && currentYear % 10 === 0) {
-            const econResult = simulate_economy(townEntity, 10, rng, coordinateKey, currentYear);
+            // Fetch deltas once for this decade pass — reused by economy, plutocracy, and mythos checks
+            const allDeltas = getDeltas(coordinateKey);
+            const lastVisitDelta = allDeltas.find(d => d.state_key === 'last_visit_year');
+            const lastVisitYear = lastVisitDelta ? parseInt(lastVisitDelta.state_value) : 0;
+            const econResult = simulate_economy(townEntity, 10, rng, coordinateKey, currentYear, lastVisitYear);
 
             // Apply tier changes from economy
             if (econResult.tierDelta !== 0) {
@@ -245,7 +287,6 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
             }
 
             // Plutocracy takeover — check for a pending plutocracy_candidate delta from /api/trade
-            const allDeltas = getDeltas(coordinateKey);
             const plutocracyDelta = allDeltas.find(d => d.state_key === 'plutocracy_candidate' && d.state_value !== 'resolved');
             if (plutocracyDelta) {
                 const merchantId = plutocracyDelta.state_value;
@@ -255,6 +296,13 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                 upsertDelta(coordinateKey, townEntity.identity.id, 'plutocracy_candidate', 'resolved');
                 pushEvent(townEntity, makeEvent(`[Year ${currentYear}] The Era of the Merchant Kings.`, 'plutocracy'));
                 log('history:plutocracy-takeover', { coordinate: coordinateKey, merchantId, year: currentYear });
+            }
+
+            // Mythos erosion and myth generation (item 14)
+            if (townEntity.mythos) {
+                erosion_check(townEntity, coordinateKey, currentYear, lastVisitYear, pushEvent);
+
+                checkMythosLegend(world, townEntity, coordinateKey, allDeltas, currentYear, targetX, targetY, pushEvent);
             }
         }
 
@@ -564,23 +612,31 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                 continue;
             } else if (eventRoll >= 0.10 && eventRoll < 0.18) {
                 log('history:career-shift', { actorId: actor.identity.id, year: currentYear, currentRole: actor.currentRole });
-                const potentialJobs = ["Beggar", "Mayor", "Cultist", "Bandit", "Merchant", "Scholar", "Guard"];
+                const rulerTitle = getRulerTitle(townEntity?.political?.tier || 1);
+                const isDistrict = townEntity?.identity?.type === 'District';
+                // Districts never generate a local ruler — their leader is always the parent city's ruler.
+                const potentialJobs = isDistrict
+                    ? ["Beggar", "Cultist", "Bandit", "Merchant", "Scholar", "Guard"]
+                    : ["Beggar", rulerTitle, "Cultist", "Bandit", "Merchant", "Scholar", "Guard"];
                 let availableJobs = potentialJobs.filter(job => job !== actor.currentRole);
                 if (townEntity && townEntity.currentMayor === "The Player") {
-                    availableJobs = availableJobs.filter(job => job !== "Mayor");
+                    availableJobs = availableJobs.filter(job => job !== rulerTitle);
                 }
                 const newJob = availableJobs[Math.floor(rng() * availableJobs.length)];
 
-                if (newJob === "Mayor") {
+                if (newJob === rulerTitle) {
                     // Compute seizure event first so the oust can reference it via causedBy
-                    const seizureEvent = makeEvent(`[Year ${currentYear}] Seized power and became the new Mayor.`, 'power_seizure');
+                    const seizureEvent = makeEvent(`[Year ${currentYear}] Seized power and became the new ${rulerTitle}.`, 'power_seizure');
                     pushEvent(actor, seizureEvent);
-                    const currentMayor = livingNpcs.find(n => n.currentRole === "Mayor" && n !== actor);
-                    if (currentMayor) {
-                        currentMayor.currentRole = "Citizen";
-                        pushEvent(currentMayor, makeEvent(`[Year ${currentYear}] Was ousted from the Mayor's office by ${actor.identity.name}.`, 'power_seizure', buildCausedBySnapshot(seizureEvent, actor.identity.name)));
+                    const currentRuler = livingNpcs.find(n => n.currentRole === rulerTitle && n !== actor);
+                    if (currentRuler) {
+                        currentRuler.currentRole = "Citizen";
+                        pushEvent(currentRuler, makeEvent(`[Year ${currentYear}] Was ousted from the ${rulerTitle}'s seat by ${actor.identity.name}.`, 'power_seizure', buildCausedBySnapshot(seizureEvent, actor.identity.name)));
                     }
-                    townEntity.currentMayor = actor.identity.name;
+                    if (townEntity) {
+                        townEntity.currentMayor = actor.identity.name;
+                    }
+                    actor.currentRole = rulerTitle;
                 } else {
                     const careerShiftEvent = makeEvent(`[Year ${currentYear}] Became a ${newJob}.`, 'career_shift');
                     pushEvent(actor, careerShiftEvent);
@@ -627,6 +683,9 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                     }
                 }
                 actor.currentRole = newJob;
+                if (townEntity?.currentMayor === actor.identity.name) {
+                    townEntity.currentMayor = "None";
+                }
 
                 if (newJob === 'Merchant') {
                     actor.merchantInventory = generateMerchantInventory(rng, townEntity?.primaryExport || 'Grain', currentYear, coordinateKey);
@@ -666,7 +725,7 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
                     actor.memories.push({ type: 'reverence', targetId: newArtifact.id, intensity: REVERENCE_MEMORY_INTENSITY, year: currentYear });
                 }
             } else if (eventRoll >= 0.38 && eventRoll < 0.40) {
-                if (actor.currentRole === "Mayor") continue;
+                if (ALL_RULER_TITLES.has(actor.currentRole)) continue;
 
                 const familyIds = Object.keys(actor.knowledge.memories).filter(id =>
                     actor.knowledge.memories[id] === MEMORY_STATES.LOVES || actor.knowledge.memories[id] === MEMORY_STATES.CHILD
@@ -695,4 +754,81 @@ function simulateHistory(world, rng, targetX, targetY, totalYears = 20, startYea
     }
 }
 
-module.exports = { simulateHistory, MEMORY_STATES, MAX_NATURAL_LIFESPAN, MAX_LIFESPAN_VARIANCE, computeDeathAge };
+/**
+ * Classify the Traveler's impact and activate the appropriate legend on a town.
+ * Called both from within simulateHistory (decade boundary during advance_time)
+ * and from loadCoordinate / loadAsDistrict after the Delta Pass, so that a
+ * temporalExposure > threshold is always caught on the first chunk load — not
+ * only during explicit time-advance runs.
+ *
+ * @param {object} world        - miniplex ECS world
+ * @param {object} townEntity   - town/district entity with a .mythos field
+ * @param {string} coordinateKey - e.g. "world_X2_Y3"
+ * @param {Array}  allDeltas    - delta rows for this coordinate (from getDeltas)
+ * @param {number} currentYear  - in-world year to stamp on history events
+ * @param {number} targetX      - tile X (needed to find faction entities)
+ * @param {number} targetY      - tile Y (needed to find faction entities)
+ * @param {Function} pushEvent  - (entity, event) → void; pass a no-op when called outside simulateHistory
+ */
+function checkMythosLegend(world, townEntity, coordinateKey, allDeltas, currentYear, targetX, targetY, pushEvent) {
+    if (!townEntity?.mythos) return;
+    if (townEntity.mythos.temporalExposure <= MYTHOS_EXPOSURE_LEGEND_THRESHOLD) return;
+    if (townEntity.mythos.activeLegend) return;
+
+    const violentCount = allDeltas.filter(d =>
+        d.state_key === 'assassinated_leader' || d.state_key === 'assassinated_merchant_hub'
+    ).length;
+    const benevolentCount = allDeltas.filter(d =>
+        d.state_key.startsWith('capsule_') || d.state_key === 'plutocracy_candidate'
+    ).length;
+
+    if (violentCount >= benevolentCount) {
+        townEntity.mythos.activeLegend = 'shadow';
+        townEntity.mythos.fearModifier = MYTHOS_FEAR_SHADOW;
+        pushEvent(townEntity, makeEvent(
+            `[Year ${currentYear}] The Shadow That Never Ages was spoken of in fearful whispers.`, 'legend'
+        ));
+        log('history:mythos-shadow', { coordinate: coordinateKey, year: currentYear });
+    } else {
+        const existingCult = Array.from(world.with('identity', 'factionType')
+            .where(e => e.identity.type === 'Faction'
+                && e.factionType === 'ancestral_reverence'
+                && e.location.x === targetX && e.location.y === targetY)).at(0);
+
+        let cultId;
+        if (existingCult) {
+            cultId = existingCult.identity.id;
+        } else {
+            const cultSeed = `cult_${coordinateKey}_${currentYear}`;
+            const cultName = generateText(seedrandom(cultSeed), '#lastName#');
+            cultId = crypto.createHash('md5').update(cultSeed).digest('hex').substring(0, 12);
+            const cultEntity = world.add({
+                identity: Identity(cultName, 'Faction', cultId),
+                location: Location(targetX, targetY),
+                members: [],
+                history: History(),
+                factionType: 'savior_cult',
+                foundedYear: currentYear,
+            });
+            pushEvent(cultEntity, makeEvent(
+                `[Year ${currentYear}] A Cult of the Timeless Savior founded.`, 'faction_spawn'
+            ));
+            saveDelta(coordinateKey, `faction_${cultId}`, JSON.stringify({
+                id: cultId, name: cultName, type: 'savior_cult',
+                members: [], foundedYear: currentYear,
+            }));
+            log('history:mythos-cult-spawned', { coordinate: coordinateKey, cultId, year: currentYear });
+        }
+
+        townEntity.mythos.activeLegend = 'savior';
+        townEntity.mythos.cultFaction = cultId;
+        pushEvent(townEntity, makeEvent(
+            `[Year ${currentYear}] A Cult of the Timeless Savior founded.`, 'legend'
+        ));
+        log('history:mythos-savior', { coordinate: coordinateKey, cultId, year: currentYear });
+    }
+
+    upsertDelta(coordinateKey, townEntity.identity.name, 'mythos', JSON.stringify(townEntity.mythos));
+}
+
+module.exports = { simulateHistory, checkMythosLegend, MYTHOS_EXPOSURE_LEGEND_THRESHOLD, MEMORY_STATES, MAX_NATURAL_LIFESPAN, MAX_LIFESPAN_VARIANCE, computeDeathAge };

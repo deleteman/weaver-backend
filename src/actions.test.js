@@ -365,15 +365,17 @@ describe('Player Actions', () => {
         playerState.titles = {};
         const result = actions.taxTown(world, "world_X0_Y0", playerState);
         expect(result.success).toBe(false);
-        expect(result.message).toContain('Only the Mayor');
+        expect(result.message).toContain('Only the ruling leader');
     });
 
     test('taxTown should confiscate items from citizens', () => {
         playerState.titles['Town'] = 'Mayor';
+        const taxConfTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+        taxConfTown.currentMayor = 'The Player';
         playerState.inventory = [];
-        
+
         const result = actions.taxTown(world, "world_X0_Y0", playerState);
-        
+
         expect(result.success).toBe(true);
         expect(result.message).toContain('taxed');
     });
@@ -386,9 +388,11 @@ describe('Player Actions', () => {
 
     test('decree should succeed if player is Mayor', () => {
         playerState.titles['Town'] = 'Mayor';
+        const decreeTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+        decreeTown.currentMayor = 'The Player';
         const result = actions.decree(world, "world_X0_Y0", dummyTargetId, "Hero", playerState);
         expect(result.success).toBe(true);
-        
+
         const targetNpc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
         expect(targetNpc.currentRole).toBe("Hero");
     });
@@ -401,6 +405,8 @@ describe('Player Actions', () => {
 
     test('banish should succeed if player is Mayor', () => {
         playerState.titles['Town'] = 'Mayor';
+        const banishMayorTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+        banishMayorTown.currentMayor = 'The Player';
         const result = actions.banish(world, "world_X0_Y0", dummyTargetId, playerState);
 
         // Either succeeds or fails based on world state, but should not throw
@@ -413,6 +419,8 @@ describe('Player Actions', () => {
         saveDelta.mockClear();
 
         playerState.titles['Town'] = 'Mayor';
+        const banishAgeTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+        banishAgeTown.currentMayor = 'The Player';
 
         const banishId = 'banish-age-target';
         world.add({
@@ -445,16 +453,48 @@ describe('Player Actions', () => {
         playerState.titles = {};
         const result = actions.abdicate(world, "world_X0_Y0", playerState);
         expect(result.success).toBe(false);
-        expect(result.message).toContain('not the Mayor');
+        expect(result.message).toContain('not the ruling leader');
     });
 
     test('abdicate should succeed and transfer power', () => {
         playerState.titles['Town'] = 'Mayor';
-        
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.currentMayor = 'The Player';
+
         const result = actions.abdicate(world, "world_X0_Y0", playerState);
-        
+
         expect(result.success).toBe(true);
         expect(playerState.titles['Town']).toBeUndefined();
+    });
+
+    test('abdicate updates town.currentMayor in memory when a successor is found', () => {
+        playerState.titles['Town'] = 'Mayor';
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.currentMayor = 'The Player';
+
+        const result = actions.abdicate(world, "world_X0_Y0", playerState);
+
+        expect(result.success).toBe(true);
+        // The successor's name must appear in both the message and the in-memory town entity
+        const successorName = town.currentMayor;
+        expect(successorName).not.toBe('The Player');
+        expect(successorName).not.toBe('None');
+        expect(result.message).toContain(successorName);
+    });
+
+    test('abdicate sets town.currentMayor to "NPC" in memory when no living citizens remain', () => {
+        playerState.titles['Town'] = 'Mayor';
+        const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+        town.currentMayor = 'The Player';
+
+        // Kill the only NPC so there is no successor
+        const npc = world.with('identity').where(e => e.identity.id === dummyTargetId).first;
+        npc.status = 'Dead';
+
+        const result = actions.abdicate(world, "world_X0_Y0", playerState);
+
+        expect(result.success).toBe(true);
+        expect(town.currentMayor).toBe('NPC');
     });
 
     // --- Structured history event tests ---
@@ -857,6 +897,8 @@ describe('Player Actions', () => {
 
         test('taxTown writes -(itemsStolen * 10) to reputationMap', () => {
             playerState.titles['Town'] = 'Mayor';
+            const taxTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+            taxTown.currentMayor = 'The Player';
             playerState.inventory = [];
             // beforeEach NPC has 1 item → itemsStolen = 1 → delta = -10
 
@@ -868,6 +910,8 @@ describe('Player Actions', () => {
 
         test('banish writes -15 to reputationMap', () => {
             playerState.titles['Town'] = 'Mayor';
+            const banishTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+            banishTown.currentMayor = 'The Player';
             const banishTargetId = 'banish-rep-target';
             world.add({
                 identity: Identity('Banish Target', 'NPC', banishTargetId),
@@ -890,6 +934,8 @@ describe('Player Actions', () => {
 
         test('abdicate (with successor) writes +25 to reputationMap', () => {
             playerState.titles['Town'] = 'Mayor';
+            const abdicateTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+            abdicateTown.currentMayor = 'The Player';
             // beforeEach NPC is alive → qualifies as successor
 
             actions.abdicate(world, COORDINATE, playerState);
@@ -1037,6 +1083,8 @@ describe('Player Actions', () => {
     describe('Ruler title recognition', () => {
         test('taxTown succeeds when player holds King title after regicide', () => {
             playerState.titles['Town'] = 'King';
+            const kingTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+            kingTown.currentMayor = 'The Player';
 
             const result = actions.taxTown(world, 'world_X0_Y0', playerState);
 
@@ -1045,16 +1093,20 @@ describe('Player Actions', () => {
 
         test('banish is not blocked by authorization when player holds King title', () => {
             playerState.titles['Town'] = 'King';
+            const kingBanishTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+            kingBanishTown.currentMayor = 'The Player';
 
             const result = actions.banish(world, 'world_X0_Y0', dummyTargetId, playerState);
 
             // Target dummy is missing `description`/`age` so banish may still fail,
             // but the important check is that it is NOT blocked by authorization.
-            expect(result.message).not.toContain('Only the Mayor');
+            expect(result.message).not.toContain('Only the ruling leader');
         });
 
         test('abdicate succeeds when player holds King title', () => {
             playerState.titles['Town'] = 'King';
+            const kingAbdicateTown = world.with('identity').where(e => e.identity.type === 'Town').first;
+            kingAbdicateTown.currentMayor = 'The Player';
 
             const result = actions.abdicate(world, 'world_X0_Y0', playerState);
 
@@ -1109,6 +1161,70 @@ describe('Player Actions', () => {
             const result = actions.assassinate(world, 'world_X0_Y0', dummyTargetId, playerState);
 
             expect(result.success).toBe(true);
+        });
+    });
+
+    // ─── bugged-chronicle-ruler.json regressions ─────────────────────────────
+    describe('Chronicle/ruler bug regressions', () => {
+        test('claimThrone updates town.currentMayor in memory to "The Player"', () => {
+            // Bug 2a: claimThrone saved the delta but left the in-memory currentMayor
+            // stale, so unloadCoordinate later wrote the stale value back as a newer
+            // delta and clobbered the legitimate claim.
+            playerState.reputation = 30;
+            const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+            town.currentMayor = 'None';
+
+            const result = actions.claimThrone(world, 'world_X0_Y0', playerState);
+
+            expect(result.success).toBe(true);
+            expect(town.currentMayor).toBe('The Player');
+        });
+
+        test('abdicate fails when player has a stale title but town.currentMayor is not "The Player"', () => {
+            // Bug 1: isMayor() trusted the client-supplied playerState.titles without
+            // confirming server state. A stale title (e.g. from a previous session
+            // before the DB was wiped) would let the player abdicate a throne they
+            // never legitimately claimed, producing an orphan abdication chronicle entry.
+            playerState.titles['Town'] = 'Mayor';
+            const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+            town.currentMayor = 'Halfdan Stoneheart'; // NPC ruler, not the player
+
+            const result = actions.abdicate(world, 'world_X0_Y0', playerState);
+
+            expect(result.success).toBe(false);
+            expect(result.message).toContain('not the ruling leader');
+        });
+
+        test('taxTown fails when player has a stale title but town.currentMayor is "None"', () => {
+            // Same gap as above — exercises the second mayor-only action.
+            playerState.titles['Town'] = 'Mayor';
+            const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+            town.currentMayor = 'None';
+
+            const result = actions.taxTown(world, 'world_X0_Y0', playerState);
+
+            expect(result.success).toBe(false);
+            expect(result.message).toContain('Only the ruling leader');
+        });
+
+        test('claim → abdicate flow leaves town.currentMayor as the successor (not stale)', () => {
+            // Bug 2 full path: after claim sets currentMayor to "The Player",
+            // abdicate must overwrite it with the successor in-memory so the next
+            // unload persists the correct ruler rather than a stale value.
+            playerState.reputation = 30;
+            const town = world.with('identity').where(e => e.identity.type === 'Town').first;
+            town.currentMayor = 'None';
+
+            const claimResult = actions.claimThrone(world, 'world_X0_Y0', playerState);
+            expect(claimResult.success).toBe(true);
+            expect(town.currentMayor).toBe('The Player');
+
+            const abdicateResult = actions.abdicate(world, 'world_X0_Y0', playerState);
+            expect(abdicateResult.success).toBe(true);
+            expect(town.currentMayor).not.toBe('The Player');
+            expect(town.currentMayor).not.toBe('None');
+            // Successor must be one of the living NPCs at this coordinate
+            expect(town.currentMayor).toBe('Target Dummy');
         });
     });
 });

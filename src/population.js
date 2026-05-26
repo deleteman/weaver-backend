@@ -22,12 +22,13 @@ function replenishPopulationIfNeeded(world, x, y, rng, townEntity, biome, curren
     if (npcs.length < tierMinimum) {
         const spawnCount = Math.floor(rng() * 5) + Math.max(3, tier * 2);
         const currentCoordinate = `world_X${x}_Y${y}`;
-        
+        const spawnedNpcs = [];
+
         for (let i = 0; i < spawnCount; i++) {
             const name = generateText(rng, "#npcName#");
             const newId = crypto.createHash('md5').update(`${currentCoordinate}_${name}_replenish_${currentYear}`).digest('hex').substring(0, 12);
             const role = assignRoleByBiome(rng, biome);
-            
+
             const initialAge = Math.floor(rng() * 15) + 16;
             const sexRoll = rng();
             const sex = sexRoll < SEX_MALE_THRESHOLD ? 'male' : sexRoll < SEX_FEMALE_THRESHOLD ? 'female' : 'other';
@@ -46,12 +47,14 @@ function replenishPopulationIfNeeded(world, x, y, rng, townEntity, biome, curren
                 inventory: Inventory(),
                 quests: Quests()
             });
-            
-            npcs.push(newNpc);
+
+            spawnedNpcs.push(newNpc);
         }
-        
+
         log('population-replenishment', { coordinate: `${x},${y}`, spawnedCount: spawnCount, tier, tierMinimum, reason: npcs.length < 3 ? 'refugee-crisis' : 'baby-boom' });
+        return spawnedNpcs;
     }
+    return [];
 }
 
 module.exports = { replenishPopulationIfNeeded };

@@ -15,17 +15,44 @@ const SETTLEMENT_TIERS = {
     Kingdom: 5         // 7x7
 };
 
+const TIER_RULER_TITLES = {
+    1: 'Mayor',
+    2: 'Mayor',
+    3: 'Lord',
+    4: 'Magistrate',
+    5: 'King'
+};
+
+function getRulerTitle(tier) {
+    return TIER_RULER_TITLES[tier] || 'Mayor';
+}
+
 const CONQUEST_TYPES = {
     ANNEXATION: 'annexation',
     SUBJUGATION: 'subjugation'
 };
 
 const NPC_ROLES = {
+    // Ruler roles (tier-gated)
     MAYOR: 'Mayor',
+    LORD: 'Lord',
+    MAGISTRATE: 'Magistrate',
+    KING: 'King',
+    // Political/support roles
     PUPPET: 'Puppet',
     GUARD: 'Guard',
     HERO: 'Hero',
-    CITIZEN: 'Citizen'
+    // Economic roles
+    MERCHANT: 'Merchant',
+    BLACKSMITH: 'Blacksmith',
+    // Social roles
+    CITIZEN: 'Citizen',
+    CHILD: 'Child',
+    SCHOLAR: 'Scholar',
+    CULTIST: 'Cultist',
+    // Outcast roles
+    BANDIT: 'Bandit',
+    BEGGAR: 'Beggar',
 };
 
 class PoliticalEngine {
@@ -209,4 +236,4 @@ class PoliticalEngine {
     }
 }
 
-module.exports = { PoliticalEngine, SETTLEMENT_TIERS, CONQUEST_TYPES, NPC_ROLES };
+module.exports = { PoliticalEngine, SETTLEMENT_TIERS, TIER_RULER_TITLES, CONQUEST_TYPES, NPC_ROLES, getRulerTitle };

@@ -4,12 +4,14 @@ const { World } = require('miniplex');
 const seedrandom = require('seedrandom');
 
 const { Identity, Location, History, Knowledge, Inventory, Quests, Status, Political, Diplomacy, Memory } = require('./src/components');
-const { PoliticalEngine, CONQUEST_TYPES } = require('./src/politics');
+const { PoliticalEngine, CONQUEST_TYPES, getRulerTitle } = require('./src/politics');
 const { generateText } = require('./src/grammar');
-const { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, appendJournalEntry, getJournal } = require('./src/db');
-const { simulateHistory, MAX_NATURAL_LIFESPAN, MAX_LIFESPAN_VARIANCE, computeDeathAge } = require('./src/history');
+const { saveDelta, upsertDelta, getDeltas, getGlobalYear, getParentCity, getTierForCoordinate, appendJournalEntry, getJournal, saveSnapshot, loadLatestSnapshot } = require('./src/db');
+const { serializeECSState, deserializeECSState } = require('./src/snapshot');
+const { simulateHistory, checkMythosLegend, MAX_NATURAL_LIFESPAN, MAX_LIFESPAN_VARIANCE, computeDeathAge } = require('./src/history');
 const { generateQuests } = require('./src/quests');
-const actions = require('./src/actions'); 
+const actions = require('./src/actions');
+const { RULER_TITLES } = actions;
 const { generateMiniMap, estimateTierFromTime, CLAIM_RADIUS_BY_TIER, DISTRICT_TYPES, getAdjacentTiles } = require('./src/map');
 const { BloomFilter } = require('./src/bloom-filter');
 const { determineBiome, assignRoleByBiome, getBiomeDemographics, determinePoliticalStance, BIOME_PRIMARY_EXPORT } = require('./src/biomes');
@@ -21,10 +23,18 @@ const { generateAppearance } = require('./src/appearance');
 const { generateTileDescription } = require('./src/tile-description');
 const { deterministicHash, makeEvent } = require('./src/event-utils');
 const { generateMerchantInventory } = require('./src/items');
+const { summarizeRulerHistory, summarizePerson, FOCUS_RULER, FOCUS_PERSON } = require('./src/chronicle-summary');
 
-const MAX_FUTURE_YEARS = 500;
+const SNAPSHOT_INTERVAL = 10; // minimum years between snapshot writes
 const SEX_MALE_THRESHOLD = 0.48;
 const SEX_FEMALE_THRESHOLD = 0.96;
+
+const MYTHOS_EXPOSURE_LEGEND_THRESHOLD = 50;
+const MYTHOS_FEAR_SHADOW = 2.0;
+const MYTHOS_DECAY_PERIOD_YEARS = 50;
+const MYTHOS_DECAY_AMOUNT = 25;
+const MYTHOS_DECAY_MIN = 0;
+const MYTHOS_DISBAND_THRESHOLD = 20;
 
 const app = express();
 app.use(cors());
@@ -60,6 +70,13 @@ function generateTown(world, x, y, rng) {
             hyperinflation: false,
             hyperinflationExpiryYear: null,
             economicBoomYear: null
+        },
+        mythos: {
+            temporalExposure: 0,
+            activeLegend: null,
+            cultFaction: null,
+            fearModifier: 1,
+            titheAccumulated: 0
         }
     });
     log(`Generated town: ${townName} at (${x}, ${y})`);
@@ -108,6 +125,13 @@ function generateNPCs(world, x, y, rng, populationSize, townEntity) {
 function injectImmigrantsAndApplyDeltas(world, x, y, townEntity, currentCoordinate) {
     const savedChanges = getDeltas(currentCoordinate);
     log(`Injecting immigrants and applying ${savedChanges.length} deltas at (${x}, ${y})`);
+
+    // Tracks entities for which currentMayor has already been applied this pass.
+    // savedChanges arrives ORDER BY id DESC, so the first match per entity is the
+    // newest delta — applying only that one matches /api/map's find()-based logic
+    // and prevents older stale rows (e.g. accumulated "None" from unload) from
+    // overwriting the latest authoritative value.
+    const mayorAppliedFor = new Set();
 
     // Inject Immigrants
     const currentGlobalYear = getGlobalYear();
@@ -190,10 +214,16 @@ function injectImmigrantsAndApplyDeltas(world, x, y, townEntity, currentCoordina
                 // Districts always inherit currentMayor from their parent (set by loadAsDistrict).
                 // Skipping the saved delta here prevents a stale 'Unknown' — written on a first
                 // visit before the parent was ever loaded — from overwriting the correct value.
-                if (entityToUpdate.identity.type !== "District") {
+                if (entityToUpdate.identity.type !== "District" && !mayorAppliedFor.has(entityToUpdate.identity.id)) {
                     entityToUpdate.currentMayor = change.state_value;
+                    mayorAppliedFor.add(entityToUpdate.identity.id);
                     log(`Applied currentMayor delta to ${entityToUpdate.identity.name}`);
                 }
+            } else if (change.state_key === 'mythos') {
+                entityToUpdate.mythos = JSON.parse(change.state_value);
+                log(`Applied mythos delta to ${entityToUpdate.identity.name}`);
+            } else if (change.state_key === 'last_visit_year') {
+                // Informational delta consumed by simulateHistory — no ECS field to update
             } else {
                 log(`Applying ${change.state_key} = ${change.state_value} to ${entityToUpdate.identity.name} (${entityToUpdate.identity.id})`);
                 entityToUpdate[change.state_key] = change.state_value;
@@ -250,10 +280,7 @@ function loadAsDistrict(x, y, parentCoordinate) {
     log(`Loading (${x}, ${y}) as district of ${parentCoordinate}`);
     const currentCoordinate = `world_X${x}_Y${y}`;
     const rng = seedrandom(currentCoordinate);
-
-    // Deterministic district type from coordinate seed
-    const districtTypeRng = seedrandom(`district_type_X${x}_Y${y}`);
-    const districtType = DISTRICT_TYPES[Math.floor(districtTypeRng() * DISTRICT_TYPES.length)];
+    const globalYear = getGlobalYear();
 
     // Inherit ruler and political state from the parent city's saved deltas
     const parentDeltas = getDeltas(parentCoordinate);
@@ -264,37 +291,76 @@ function loadAsDistrict(x, y, parentCoordinate) {
         ? JSON.parse(politicalDelta.state_value)
         : { tier: 1, demographics: {}, stance: 'Balanced' };
 
-    // Generate district town entity — same name seed as map so names are consistent
-    const townName = generateText(rng, "#townName#");
-    const townId = crypto.createHash('md5').update(`${currentCoordinate}_${townName}_district`).digest('hex').substring(0, 12);
+    const snapshot = loadLatestSnapshot(currentCoordinate, globalYear);
 
-    const districtEntity = world.add({
-        identity: Identity(townName, "District", townId),
-        location: Location(x, y),
-        history: { events: [`[Year 1] Established as a ${districtType} district under ${parentCoordinate}.`] },
-        currentMayor: parentMayor,
-        political: { ...parentPolitical },
-        population: 0,
-        districtType,
-        parentCity: parentCoordinate
-    });
+    if (snapshot) {
+        // Snapshot fast path: restore ECS state, simulate only remaining years
+        log(`Snapshot found for district (${x}, ${y}) at year ${snapshot.year}`);
+        deserializeECSState(world, JSON.parse(snapshot.stateBlob));
+        const remainingYears = globalYear - snapshot.year;
+        if (remainingYears > 0) {
+            simulateHistory(world, seedrandom(currentCoordinate + "_future"), x, y, remainingYears, snapshot.year + 1);
+        }
+    } else {
+        // Cold path: full generation and simulation
+        const districtTypeRng = seedrandom(`district_type_X${x}_Y${y}`);
+        const districtType = DISTRICT_TYPES[Math.floor(districtTypeRng() * DISTRICT_TYPES.length)];
 
-    // Generate NPCs — population is smaller than a full town (3–9)
-    const populationSize = Math.floor(rng() * 7) + 3;
-    generateNPCs(world, x, y, rng, populationSize, districtEntity);
+        // Generate district town entity — same name seed as map so names are consistent
+        const townName = generateText(rng, "#townName#");
+        const townId = crypto.createHash('md5').update(`${currentCoordinate}_${townName}_district`).digest('hex').substring(0, 12);
 
-    // Legends Pass (Years 1-50) and Future Pass — must run before delta injection,
-    // matching the regular town pipeline so DB-accumulated immigrants don't compound
-    simulateHistory(world, rng, x, y, 50, 1);
-    const globalYear = getGlobalYear();
-    const futureYears = Math.min(globalYear - 51, MAX_FUTURE_YEARS);
-    if (futureYears > 0) {
-        simulateHistory(world, seedrandom(currentCoordinate + "_future"), x, y, futureYears, 51);
+        world.add({
+            identity: Identity(townName, "District", townId),
+            location: Location(x, y),
+            history: { events: [makeEvent(`[Year 1] Established as a ${districtType} district under ${parentCoordinate}.`, 'district_established')] },
+            currentMayor: parentMayor,
+            political: { ...parentPolitical },
+            population: 0,
+            districtType,
+            parentCity: parentCoordinate,
+            mythos: {
+                temporalExposure: 0,
+                activeLegend: null,
+                cultFaction: null,
+                fearModifier: 1,
+                titheAccumulated: 0,
+            },
+        });
+
+        // Generate NPCs — population is smaller than a full town (3–9)
+        const populationSize = Math.floor(rng() * 7) + 3;
+        const coldDistrictEntity = world.with('identity', 'currentMayor')
+            .where(e => e.identity.type === 'District' && e.location.x === x && e.location.y === y).first;
+        generateNPCs(world, x, y, rng, populationSize, coldDistrictEntity);
+
+        // Legends Pass (Years 1-50) and Future Pass — must run before delta injection,
+        // matching the regular town pipeline so DB-accumulated immigrants don't compound
+        simulateHistory(world, rng, x, y, 50, 1);
+        const futureYears = globalYear - 51;
+        if (futureYears > 0) {
+            simulateHistory(world, seedrandom(currentCoordinate + "_future"), x, y, futureYears, 51);
+        }
+    }
+
+    // Capture deterministic state before Delta Pass and write snapshot
+    const shouldWriteSnapshot = !snapshot || (globalYear - snapshot.year) >= SNAPSHOT_INTERVAL;
+    if (shouldWriteSnapshot) {
+        try {
+            const snapshotBlob = JSON.stringify(serializeECSState(world, x, y));
+            saveSnapshot(currentCoordinate, globalYear, snapshotBlob);
+        } catch (e) {
+            log(`Snapshot write failed for district (${x}, ${y}): ${e.message}`);
+        }
     }
 
     // Districts are always governed by the parent city's ruler — simulation may have
     // promoted a local NPC to Mayor, so we restore the authoritative parent value.
-    districtEntity.currentMayor = parentMayor;
+    const districtEntity = world.with('identity', 'currentMayor')
+        .where(e => e.identity.type === 'District' && e.location.x === x && e.location.y === y).first;
+    if (districtEntity) {
+        districtEntity.currentMayor = parentMayor;
+    }
 
     // Reconcile any NPC that simulation elevated to Mayor: their fate depends on how
     // this tile was conquered. Annexation = executed; Subjugation = demoted to Puppet;
@@ -306,7 +372,7 @@ function loadAsDistrict(x, y, parentCoordinate) {
     const localMayors = Array.from(
         world.with('identity', 'currentRole', 'status', 'location')
              .where(e => e.identity.type === 'NPC'
-                      && e.currentRole === 'Mayor'
+                      && RULER_TITLES.includes(e.currentRole)
                       && e.status !== 'Dead'
                       && e.location.x === x && e.location.y === y)
     );
@@ -331,9 +397,17 @@ function loadAsDistrict(x, y, parentCoordinate) {
     // Apply any player-caused deltas (kills, steals, etc.) for this coordinate
     injectImmigrantsAndApplyDeltas(world, x, y, districtEntity, currentCoordinate);
 
+    // Post-delta Mythos legend check (same reason as in loadCoordinate)
+    if (districtEntity?.mythos?.temporalExposure > MYTHOS_EXPOSURE_LEGEND_THRESHOLD
+            && !districtEntity.mythos.activeLegend) {
+        const districtAllDeltas = getDeltas(currentCoordinate);
+        checkMythosLegend(world, districtEntity, currentCoordinate, districtAllDeltas,
+            getGlobalYear(), x, y, () => {});
+    }
+
     // Generate quests scoped to this district
     generateQuests(world, x, y, seedrandom(currentCoordinate + "_quests"));
-    log(`District (${districtType}) loaded at (${x}, ${y}) under ${parentCoordinate}`);
+    log(`District loaded at (${x}, ${y}) under ${parentCoordinate}`);
 }
 
 // Mirrors computeOwnership() from map.js: scans neighbours within the maximum
@@ -400,33 +474,69 @@ function loadCoordinate(x, y, forcedUniversalYear = null) {
         loadAsDistrict(x, y, parentCoordinate);
         return;
     }
-    const rng = seedrandom(currentCoordinate);
-    
-    // Base Generation (Town)
-    const townEntity = generateTown(world, x, y, rng);
 
-    // Base Generation (Native Population)
-    const populationSize = Math.floor(rng() * 9) + 4; 
-    generateNPCs(world, x, y, rng, populationSize, townEntity);
-    
-    // Calculate and assign political stance
-    calculatePoliticalStance(world, x, y, townEntity);
-
-    // The Legends Pass (Years 1-50)
-    log(`Simulating initial history for 50 years at (${x}, ${y})`);
-    simulateHistory(world, rng, x, y, 50, 1);
-
-    // THE FUTURE PASS (Fixed to use Universal Time & Bypasses)
     const currentUniversalYear = forcedUniversalYear !== null ? forcedUniversalYear : getGlobalYear();
-    const futureYears = Math.min(currentUniversalYear - 51, MAX_FUTURE_YEARS);
+    const rng = seedrandom(currentCoordinate);
 
-    if (futureYears > 0) {
-        log(`Simulating future history for ${futureYears} years at (${x}, ${y})`);
-        simulateHistory(world, seedrandom(currentCoordinate + "_future"), x, y, futureYears, 51);
+    const snapshot = loadLatestSnapshot(currentCoordinate, currentUniversalYear);
+
+    if (snapshot) {
+        // Snapshot fast path: restore ECS state, simulate only remaining years
+        log(`Snapshot found for (${x}, ${y}) at year ${snapshot.year}, simulating ${currentUniversalYear - snapshot.year} remaining years`);
+        deserializeECSState(world, JSON.parse(snapshot.stateBlob));
+        const remainingYears = currentUniversalYear - snapshot.year;
+        if (remainingYears > 0) {
+            simulateHistory(world, seedrandom(currentCoordinate + "_future"), x, y, remainingYears, snapshot.year + 1);
+        }
+    } else {
+        // Cold path: full Base + Legends + Future Pass generation
+        const townEntity = generateTown(world, x, y, rng);
+        const populationSize = Math.floor(rng() * 9) + 4;
+        generateNPCs(world, x, y, rng, populationSize, townEntity);
+        calculatePoliticalStance(world, x, y, townEntity);
+
+        log(`Simulating initial history for 50 years at (${x}, ${y})`);
+        simulateHistory(world, rng, x, y, 50, 1);
+
+        const futureYears = currentUniversalYear - 51;
+        if (futureYears > 0) {
+            log(`Simulating future history for ${futureYears} years at (${x}, ${y})`);
+            simulateHistory(world, seedrandom(currentCoordinate + "_future"), x, y, futureYears, 51);
+        }
     }
+
+    // Capture deterministic state before Delta Pass and write snapshot asynchronously
+    const shouldWriteSnapshot = !snapshot || (currentUniversalYear - snapshot.year) >= SNAPSHOT_INTERVAL;
+    if (shouldWriteSnapshot) {
+        try {
+            const snapshotBlob = JSON.stringify(serializeECSState(world, x, y));
+            // DB write is synchronous (better-sqlite3) but cheap; keep inline for simplicity
+            saveSnapshot(currentCoordinate, currentUniversalYear, snapshotBlob);
+        } catch (e) {
+            log(`Snapshot write failed for (${x}, ${y}): ${e.message}`);
+        }
+    }
+
+    // Recalculate political stance after simulation (role distribution may have changed)
+    const townEntity = world.with('identity', 'currentMayor')
+        .where(e => e.identity.type === 'Town' && e.location.x === x && e.location.y === y).first;
+    if (townEntity) calculatePoliticalStance(world, x, y, townEntity);
 
     // Inject Immigrants and Apply Deltas
     injectImmigrantsAndApplyDeltas(world, x, y, townEntity, currentCoordinate);
+
+    // Post-delta Mythos legend check: the Future Pass ran before the Delta Pass, so
+    // townEntity.mythos.temporalExposure was 0 during simulation. Now that the mythos
+    // delta has been applied, trigger legend activation if the threshold is crossed.
+    const postDeltaTownEntity = world.with('identity', 'mythos')
+        .where(e => (e.identity.type === 'Town' || e.identity.type === 'District')
+            && e.location.x === x && e.location.y === y).first;
+    if (postDeltaTownEntity?.mythos?.temporalExposure > MYTHOS_EXPOSURE_LEGEND_THRESHOLD
+            && !postDeltaTownEntity.mythos.activeLegend) {
+        const allDeltas = getDeltas(currentCoordinate);
+        checkMythosLegend(world, postDeltaTownEntity, currentCoordinate, allDeltas,
+            currentUniversalYear, x, y, () => {});
+    }
 
     // Generate Dynamic Quests
     log(`Generating quests at (${x}, ${y})`);
@@ -448,7 +558,9 @@ function unloadCoordinate(x, y) {
         // Districts inherit currentMayor from their parent on every load — saving it here would
         // write a stale value that later overwrites the parent's authoritative mayor during delta injection.
         if (settlement.identity.type !== "District") {
-            saveDelta(currentCoordinate, settlement.identity.id, "currentMayor", settlement.currentMayor || "None");
+            // upsertDelta (not saveDelta) so repeat unloads don't accumulate duplicate
+            // currentMayor rows that later outrank legitimate claim/abdicate deltas.
+            upsertDelta(currentCoordinate, settlement.identity.id, "currentMayor", settlement.currentMayor || "None");
         }
         log(`Saved ${settlement.identity.type} state: tier=${settlement.political?.tier}, population=${settlement.population}, mayor=${settlement.currentMayor || "None"}`);
 
@@ -525,10 +637,27 @@ function serializeChunk(x, y) {
         districtType: town?.districtType || null,
         parentCity:  town?.parentCity || null,
         ruler:       town ? town.currentMayor : "NPC",
+        rulerTitle:  getRulerTitle(town?.political?.tier ?? 1),
         tier:        town ? (town.political?.tier ?? 1) : 1,
         population:  town ? town.population : 0,
         history:     town ? town.history.events : [],
         politicalStance: town?.politicalStance || 'Balanced',
+        regionalWealth:   town?.regionalWealth ?? 0,
+        primaryExport:    town?.primaryExport ?? null,
+        tradePartners:    town?.tradePartners ?? [],
+        economicModifiers: town?.economicModifiers ?? {
+            shortage: false,
+            hyperinflation: false,
+            hyperinflationExpiryYear: null,
+            economicBoomYear: null,
+        },
+        mythos: town?.mythos ?? {
+            temporalExposure: 0,
+            activeLegend: null,
+            cultFaction: null,
+            fearModifier: 1,
+            titheAccumulated: 0,
+        },
     };
 
     const factionEntities = Array.from(world.with('identity', 'location').where(e =>
@@ -572,6 +701,9 @@ app.get('/api/chunk/:x/:y', (req, res) => {
             summary: `Visited ${visitSettlementName}`,
             detail: { settlementName: visitSettlementName }
         });
+        if (chunkData.town?.name) {
+            upsertDelta(coordinateString, chunkData.town.name, 'last_visit_year', String(chunkData.globalYear));
+        }
         unloadCoordinate(x, y);
         log(`API response: chunk data sent`);
         res.json(chunkData);
@@ -753,6 +885,60 @@ function handleMiniMapRequest(req, res) {
 app.get('/api/map/:x/:y', handleMiniMapRequest);
 app.get('/api/map/:x/:y/:radius', handleMiniMapRequest);
 
+/**
+ * Builds the raw chronicle timeline from all ECS entities at a given coordinate.
+ * The world must already be loaded before calling this function.
+ *
+ * @param {number} x
+ * @param {number} y
+ * @returns {{ title: string, timeline: Object }}
+ */
+function buildChronicleTimeline(x, y) {
+    const entities = Array.from(world.with('identity', 'history').where(e => e.location.x === x && e.location.y === y));
+    const yearRegex = /\[Year (\d+)\] (.*)/;
+    let allEvents = [];
+
+    for (const entity of entities) {
+        for (const ev of entity.history.events) {
+            if (typeof ev === 'string') {
+                const match = ev.match(yearRegex);
+                if (match) {
+                    allEvents.push({
+                        year: parseInt(match[1]),
+                        actor: entity.identity.name,
+                        text: match[2],
+                        id: null,
+                        type: 'legacy',
+                        causedBy: null
+                    });
+                }
+            } else {
+                allEvents.push({
+                    year: ev.year,
+                    actor: entity.identity.name,
+                    text: ev.description.replace(/^\[Year \d+\]\s*/, ''),
+                    id: ev.id,
+                    type: ev.type,
+                    causedBy: ev.causedBy
+                });
+            }
+        }
+    }
+
+    allEvents.sort((a, b) => a.year - b.year);
+
+    const timeline = {};
+    for (const ev of allEvents) {
+        if (!timeline[`Year ${ev.year}`]) timeline[`Year ${ev.year}`] = [];
+        timeline[`Year ${ev.year}`].push({ id: ev.id, actor: ev.actor, text: ev.text, type: ev.type, causedBy: ev.causedBy });
+    }
+
+    return {
+        title: `The Chronicles of Coordinate ${x}, ${y}`,
+        timeline,
+    };
+}
+
 // --- NEW ENDPOINT: THE TOWN CHRONICLE ---
 app.get('/api/chunk/:x/:y/chronicle', (req, res) => {
     const x = parseInt(req.params.x);
@@ -761,62 +947,65 @@ app.get('/api/chunk/:x/:y/chronicle', (req, res) => {
     log(`API request: GET /api/chunk/${x}/${y}/chronicle`);
     try {
         loadCoordinate(x, y);
-
-        // Gather all entities with a history
-        const entities = Array.from(world.with('identity', 'history').where(e => e.location.x === x && e.location.y === y));
-
-        let allEvents = [];
-        const yearRegex = /\[Year (\d+)\] (.*)/;
-
-        for (const entity of entities) {
-            for (const ev of entity.history.events) {
-                if (typeof ev === 'string') {
-                    // Legacy plain-string event (pre-structured-events data)
-                    const match = ev.match(yearRegex);
-                    if (match) {
-                        allEvents.push({
-                            year: parseInt(match[1]),
-                            actor: entity.identity.name,
-                            text: match[2],
-                            id: null,
-                            type: 'legacy',
-                            causedBy: null
-                        });
-                    }
-                } else {
-                    allEvents.push({
-                        year: ev.year,
-                        actor: entity.identity.name,
-                        text: ev.description.replace(/^\[Year \d+\]\s*/, ''),
-                        id: ev.id,
-                        type: ev.type,
-                        causedBy: ev.causedBy
-                    });
-                }
-            }
-        }
-
-        // Sort chronologically
-        allEvents.sort((a, b) => a.year - b.year);
-
-        // Group by year; entries are objects (id, actor, text, type, causedBy)
-        let chronicle = {};
-        for (const ev of allEvents) {
-            if (!chronicle[`Year ${ev.year}`]) chronicle[`Year ${ev.year}`] = [];
-            chronicle[`Year ${ev.year}`].push({ id: ev.id, actor: ev.actor, text: ev.text, type: ev.type, causedBy: ev.causedBy });
-        }
-
+        const result = buildChronicleTimeline(x, y);
         unloadCoordinate(x, y);
 
-        log(`Chronicle generated with ${allEvents.length} events`);
-        res.json({
-            title: `The Chronicles of Coordinate ${x}, ${y}`,
-            timeline: chronicle
-        });
+        log(`Chronicle generated with ${Object.values(result.timeline).flat().length} events`);
+        res.json(result);
     } catch (err) {
         unloadCoordinate(x, y);
         log(`Chronicle error at (${x}, ${y}): ${err.message}`);
         res.status(500).json({ error: err.message, code: 'CHRONICLE_ERROR' });
+    }
+});
+
+// --- CHRONICLE SUMMARY ENDPOINT ---
+const VALID_SUMMARY_FOCUS = [FOCUS_RULER, FOCUS_PERSON];
+
+app.get('/api/chunk/:x/:y/chronicle/summary', (req, res) => {
+    const x = parseInt(req.params.x);
+    const y = parseInt(req.params.y);
+    const { focus, name } = req.query;
+
+    log(`API request: GET /api/chunk/${x}/${y}/chronicle/summary?focus=${focus}`);
+
+    if (!focus || !VALID_SUMMARY_FOCUS.includes(focus)) {
+        return res.status(400).json({
+            error: `Missing or invalid ?focus= parameter. Valid values: ${VALID_SUMMARY_FOCUS.join(', ')}.`,
+            code: 'INVALID_FOCUS',
+        });
+    }
+
+    if (focus === FOCUS_PERSON && !name) {
+        return res.status(400).json({
+            error: 'Missing required ?name= parameter for person summary.',
+            code: 'MISSING_NAME',
+        });
+    }
+
+    try {
+        loadCoordinate(x, y);
+        const { timeline } = buildChronicleTimeline(x, y);
+        unloadCoordinate(x, y);
+
+        let summary;
+        if (focus === FOCUS_RULER) {
+            summary = summarizeRulerHistory(timeline);
+        } else {
+            summary = summarizePerson(timeline, name);
+            if (summary === null) {
+                return res.status(404).json({
+                    error: `No chronicle events found for person "${name}".`,
+                    code: 'PERSON_NOT_FOUND',
+                });
+            }
+        }
+
+        res.json(summary);
+    } catch (err) {
+        unloadCoordinate(x, y);
+        log(`Chronicle summary error at (${x}, ${y}): ${err.message}`);
+        res.status(500).json({ error: err.message, code: 'CHRONICLE_SUMMARY_ERROR' });
     }
 });
 

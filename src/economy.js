@@ -23,7 +23,9 @@ const RUIN_CHANCE_WITHOUT_MERCHANT = 0.40;
  * @param {number}   globalYear  - Current universal year (used for capsule ΔT calculation)
  * @returns {{ events: object[], tierDelta: number, modifierChanges: object, divergenceLog: object[] }}
  */
-function simulate_economy(town, years, rng, coordinate, globalYear) {
+const MYTHOS_TITHE_RATE = 0.05;
+
+function simulate_economy(town, years, rng, coordinate, globalYear, lastVisitYear = 0) {
     const events = [];
     const divergenceLog = [];
     let tierDelta = 0;
@@ -94,6 +96,13 @@ function simulate_economy(town, years, rng, coordinate, globalYear) {
 
     // Evaluate trade route health
     _evaluateTradeRoutes(town, coordinate, modifierChanges, events, globalYear);
+
+    // Cult tithe accumulation — accrues when the Savior legend is active (item 14)
+    if (town.mythos?.cultFaction && town.mythos.activeLegend === 'savior') {
+        const decadesSinceVisit = Math.max(0, Math.floor((globalYear - lastVisitYear) / 10));
+        town.mythos.titheAccumulated = (town.mythos.titheAccumulated || 0)
+            + Math.floor((town.regionalWealth || 0) * MYTHOS_TITHE_RATE * decadesSinceVisit);
+    }
 
     return { events, tierDelta, modifierChanges, divergenceLog };
 }
